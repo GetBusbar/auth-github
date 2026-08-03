@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# This repo brings 100% of what it needs: the real GitHub-OAuth login logic (busbar-auth-github) and
+# the thin dlopen ABI adapter that packages it as a busbar plugin (busbar-auth-github-plugin) both
+# live here, as a same-repo Cargo workspace — not split across this repo and busbarAI. Only
+# busbar-api/busbar-plugin-sdk still reach into a sibling busbarAI checkout, since those are the
+# core-engine contracts every plugin depends on the same way (INTERIM local path deps until busbarAI
+# ships publicly, then git-pinned-rev / crates.io).
+[workspace]
+resolver = "2"
+members = [
+    "busbar-auth-github",
+    "busbar-auth-github-plugin",
+]

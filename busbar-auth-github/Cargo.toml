@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "busbar-auth-github"
+version = "1.0.0"
+publish = false            # internal workspace crate; never goes to crates.io
+edition = "2021"
+rust-version = "1.97"
+description = "The GitHub-OAuth login module for busbar: drive GitHub's authorization-code → opaque-access-token → REST /user → /user/orgs flow over the busbar multi-hop LoginModule ABI (1.5.2, auth ABI v2) and map it to a Principal (github:<login> + github:org/<org> groups). Login-capable: implements busbar_api::LoginModule. The confidential-client secret is injected by the CORE, never held here."
+license = "Apache-2.0"
+
+[dependencies]
+# INTERIM: busbarAI isn't public yet, so this is a local path dependency into a sibling checkout of
+# the monorepo. Once busbarAI ships publicly this should become a git (pinned rev/tag) or crates.io
+# dependency instead — same pattern as busbar-plugin-sdk in ../busbar-auth-github-plugin.
+busbar-api = { path = "../../busbarAI/crates/api" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
