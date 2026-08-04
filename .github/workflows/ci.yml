@@ -15,10 +15,10 @@ jobs:
       plugin_crate: busbar-auth-github-plugin
       plugin_kind: auth
       plugin_alias: github
+      busbar_ref: ${{ github.ref_name }} # same-branch: qa builds core qa, dev builds core dev (no stale main/tag)
       # WireMock service container for the live GET token-exchange e2e (tests/e2e.rs): the CORE
       # executes the real token → /user → /user/orgs hops against it.
       service: wiremock
       # The 1.5.2 auth ABI v2 + hosted GET /auth/token login flow live on busbar `dev` (the release
       # candidate), not yet `main` — build the sibling against dev so the plugin + its live e2e compile
       # and run. Flip back to the default (main) once 1.5.2 ships. (See .busbar-ref's placeholder note.)
-      busbar_ref: dev
