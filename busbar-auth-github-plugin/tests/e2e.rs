@@ -284,6 +284,7 @@ fn github_get_flow_mints_key_via_core_executed_hops() {
             "listen: \"127.0.0.1:{data_port}\"\n\
              public_url: \"https://gate.busbar.e2e\"\n\
              auth:\n  key_ttl: \"7d\"\n  signing_key: {{ file: \"{signing}\" }}\n  chain:\n    - keys\n\
+             \x20 admin_auth:\n    - admin-tokens: {{ token: {{ env: BUSBAR_ADMIN_TOKEN }} }}\n\
              \x20 methods:\n    github:\n      browser_login:\n        client_id: \"Iv1.e2eclient\"\n\
              \x20       client_secret: {{ env: BUSBAR_GH_CLIENT_SECRET }}\n\
              \x20     token_base: \"{wm}\"\n      api_base: \"{wm}\"\n      authorize_base: \"{wm}\"\n\
@@ -304,6 +305,7 @@ fn github_get_flow_mints_key_via_core_executed_hops() {
         .env("BUSBAR_PROVIDERS", &providers)
         .env("MOCK_KEY", "unused")
         .env("BUSBAR_GH_CLIENT_SECRET", "e2e-secret")
+        .env("BUSBAR_ADMIN_TOKEN", "e2e-admin-token")
         .env("BUSBAR_STATE_FILE", "")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
