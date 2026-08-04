@@ -65,7 +65,10 @@ fn minimal_config_succeeds_and_is_login_capable() {
     };
     match module.begin_login(&begin) {
         LoginOutcome::Authorize(url) => {
-            assert!(url.starts_with("https://github.com/login/oauth/authorize?"), "{url}")
+            assert!(
+                url.starts_with("https://github.com/login/oauth/authorize?"),
+                "{url}"
+            )
         }
         other => panic!("login capability must be live, got {other:?}"),
     }

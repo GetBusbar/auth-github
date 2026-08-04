@@ -100,19 +100,17 @@ adapter).
 - **PKCE.** GitHub supports S256 PKCE on the web authorization-code flow (2024+). The core-minted
   `code_challenge` is always sent; a GitHub OAuth App that has not opted into PKCE simply ignores it,
   and the paired `code_verifier` rides the token exchange harmlessly.
-- **Request headers on GET hops (ABI gap).** The committed 1.5.2 `LoginHop` / `HttpRequest` carries
-  only `method` / `url` / `form` / `secret_form_field` — there is **no request-header slot**. GitHub
-  REST calls **require** an `Authorization: Bearer <token>` and a `User-Agent` header. The
-  token-exchange `POST` hop is fully expressible on the committed ABI; the two authenticated GET hops
-  (`/user`, `/user/orgs`) are **not** — carrying their headers needs a `headers: Vec<(String,String)>`
-  field added to `LoginHop`/`HttpRequest`. `busbar_auth_github::userinfo_headers()` computes exactly
-  the headers the core must attach, so the plugin is ready the moment that field lands. This is the one
-  ABI extension GitHub needs beyond OIDC.
+- **Request headers on GET hops.** GitHub REST calls **require** an `Authorization: Bearer <token>`
+  and a `User-Agent` header. Auth ABI v2's `LoginHop` / `HttpRequest` carries a `headers:
+  Vec<(String,String)>` field for exactly this; `busbar_auth_github::userinfo_headers()` computes the
+  headers, and `build_userinfo_get`/`build_orgs_get` attach them directly to the `/user` and
+  `/user/orgs` hops. The core sanitizes them (rejects CR/LF/NUL and hop-control headers) and only sends
+  the hop to an operator-allowlisted host.
 - **`ca_cert_pem` delivery.** Because the core (not the plugin) executes hops, this GHES CA value has
-  no delivery channel to the hop executor on the committed ABI. It is accepted here for
+  no delivery channel to the hop executor on the current ABI. It is accepted here for
   forward-compatibility and to capture operator intent.
 - **Multi-hop flow state.** The access token is seen once (the token response) but is needed to
   authenticate both GETs, and the `/user` identity is needed at the `/user/orgs` step. The module
   threads this per-flow state keyed by the core-held PKCE `code_verifier` (falling back to `code` /
   `redirect_uri`). If the core echoes none of those on the feedback calls, concurrent logins would
-  share a single slot — the one correctness caveat of the org-hop chain on the committed ABI.
+  share a single slot — the one correctness caveat of the org-hop chain on the current ABI.
