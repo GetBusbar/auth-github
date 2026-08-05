@@ -12,7 +12,7 @@
 //! hand-rolled server), provided by CI as a service container and addressed via
 //! `BUSBAR_TEST_WIREMOCK_URL` (mirrors how the store plugins read `BUSBAR_TEST_POSTGRES_URL`). This
 //! test registers its stub mappings over WireMock's own `/__admin` API, packs the real plugin cdylib
-//! with the real `busbar-plugin-pack`, boots the real `busbar` binary with `auth.methods.github`
+//! with the real `busbar-plugin-pack`, boots the real `busbar` binary with an `identity-providers.github`
 //! pointed at WireMock, and drives GET begin → callback so the CORE really runs the hops.
 //!
 //! GATING: when `BUSBAR_TEST_WIREMOCK_URL` is unset (a local run without the container) the test
@@ -283,11 +283,12 @@ fn github_get_flow_mints_key_via_core_executed_hops() {
         format!(
             "listen: \"127.0.0.1:{data_port}\"\n\
              public_url: \"https://gate.busbar.e2e\"\n\
+             identity-providers:\n  admin-tokens: {{ module: admin-tokens, token: {{ env: BUSBAR_ADMIN_TOKEN }} }}\n\
+             \x20 github:\n    module: github\n    browser_login:\n      client_id: \"Iv1.e2eclient\"\n\
+             \x20     client_secret: {{ env: BUSBAR_GH_CLIENT_SECRET }}\n\
+             \x20   settings:\n      token_base: \"{wm}\"\n      api_base: \"{wm}\"\n      authorize_base: \"{wm}\"\n\
              auth:\n  key_ttl: \"7d\"\n  signing_key: {{ file: \"{signing}\" }}\n  chain:\n    - keys\n\
-             \x20 admin_auth:\n    - admin-tokens: {{ token: {{ env: BUSBAR_ADMIN_TOKEN }} }}\n\
-             \x20 methods:\n    github:\n      browser_login:\n        client_id: \"Iv1.e2eclient\"\n\
-             \x20       client_secret: {{ env: BUSBAR_GH_CLIENT_SECRET }}\n\
-             \x20     token_base: \"{wm}\"\n      api_base: \"{wm}\"\n      authorize_base: \"{wm}\"\n\
+             \x20 admin_auth: [admin-tokens]\n\
              \x20 role_bindings:\n    github:\n      \"github:org/testorg\":\n        group: eng-team\n\
              plugins:\n  enabled: true\n  dir: {plugins}\n  trust:\n    allow_unsigned: true\n\
              groups:\n  eng-team:\n    limits:\n      - {{ requests: 1000000, per: day }}\n\
@@ -310,7 +311,7 @@ fn github_get_flow_mints_key_via_core_executed_hops() {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .expect("spawn busbar with auth.methods.github");
+        .expect("spawn busbar with identity-providers.github");
     let base = format!("http://127.0.0.1:{data_port}");
     wait_for_health(&client, &format!("{base}/healthz"), &mut child);
 
