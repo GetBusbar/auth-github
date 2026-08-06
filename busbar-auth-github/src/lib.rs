@@ -35,6 +35,7 @@
 //! `/user` and `/user/orgs` hops. The CORE sanitizes and attaches them (CR/LF/NUL + hop-control
 //! headers rejected; host must be operator-allowlisted) before executing the hop.
 
+use busbar_api::Redacted;
 use busbar_api::{
     AuthModule, AuthOutcome, BeginLogin, CompleteLogin, LoginHop, LoginHttpResponse, LoginModule,
     LoginOutcome, Principal,
@@ -43,6 +44,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::Instant;
 
 /// The default OAuth scopes requested: `read:org` (to enumerate the caller's org memberships → groups)
 /// and `read:user` (the profile `/user` read). Operators can override via `scopes`, and `begin_login`
@@ -420,10 +422,25 @@ pub fn identity_from_user_and_orgs(user_body: &str, orgs_body: Option<&str>) -> 
 /// response) is needed to author the SECOND authenticated GET, and the `/user` identity (seen at the
 /// `/user` response) is needed to build the final `Principal` at the `/user/orgs` response. This holds
 /// both across the hop chain.
-#[derive(Debug, Clone, Default)]
+/// How long a half-finished flow's state is kept. The core abandons a hop chain without re-entering
+/// this module whenever a hop itself fails to execute (an upstream 5xx, a timeout, hop-limit
+/// exhaustion), so the entry inserted before that hop is never removed by any code path here. Left
+/// unbounded, every abandoned flow retained a LIVE GitHub access token for the process lifetime and
+/// an anonymous caller could grow the map without limit just by starting flows and letting the
+/// second hop fail. Generous against a real browser round trip, far short of a token's usefulness.
+const PENDING_TTL_SECS: u64 = 600;
+
+/// A hard ceiling, independent of the TTL, so a burst cannot outrun the sweep.
+const PENDING_MAX: usize = 4096;
+
+#[derive(Debug, Clone)]
 struct PendingLogin {
-    access_token: String,
+    /// The opaque GitHub bearer, wrapped so a stray `{:?}` on this struct, or on the map that holds
+    /// it, cannot print it. Nothing formats these today; this is to keep it that way.
+    access_token: Redacted<String>,
     user: Option<GhUser>,
+    /// When this entry was stashed, for the TTL sweep.
+    inserted_at: Instant,
 }
 
 /// The runtime GitHub login module. Verify-path (`AuthModule`) is a deliberate `Pass` (a GitHub opaque
@@ -558,14 +575,37 @@ impl GithubModule {
     /// bearer-authenticated with that token.
     fn after_token(&self, key: &str, token: String) -> LoginOutcome {
         let hop = build_userinfo_get(&self.cfg, &token);
-        self.pending.lock().unwrap().insert(
+        let mut pending = self.pending.lock().unwrap();
+        Self::sweep(&mut pending);
+        if pending.len() >= PENDING_MAX {
+            // At the ceiling with nothing sweepable, refuse rather than grow. Every entry here
+            // holds a live GitHub bearer, so unbounded growth is both a memory problem and a
+            // credential-retention one.
+            return LoginOutcome::Reject;
+        }
+        pending.insert(
             key.to_string(),
             PendingLogin {
-                access_token: token,
+                access_token: Redacted::new(token),
                 user: None,
+                inserted_at: Instant::now(),
             },
         );
         LoginOutcome::Exchange(hop)
+    }
+
+    /// Drop entries older than the TTL.
+    ///
+    /// Every removal path in this module runs only when the core calls back into it. The core
+    /// abandons a hop chain WITHOUT re-entering the module whenever a hop itself fails to execute
+    /// (an upstream 5xx, a timeout, hop-limit exhaustion), so the entry stashed before that hop was
+    /// never removed by anything. That leaked a live access token per abandoned flow, for the
+    /// process lifetime, and let an anonymous caller grow the map without limit by starting flows
+    /// and letting the second hop fail. Swept on insert, which is the only path that grows the map.
+    fn sweep(pending: &mut HashMap<String, PendingLogin>) {
+        let ttl = std::time::Duration::from_secs(PENDING_TTL_SECS);
+        let now = Instant::now();
+        pending.retain(|_, e| now.saturating_duration_since(e.inserted_at) < ttl);
     }
 
     /// `/user` response was fed back: parse `login`/`id` (fail-closed on missing `login`). When
@@ -591,7 +631,10 @@ impl GithubModule {
         entry.user = Some(user);
         // The `/user/orgs` GET is authenticated with the SAME opaque access token stashed at the token
         // step, attached via the ABI v2 `headers` field.
-        LoginOutcome::Exchange(build_orgs_get(&self.cfg, &entry.access_token))
+        LoginOutcome::Exchange(build_orgs_get(
+            &self.cfg,
+            entry.access_token.expose_secret(),
+        ))
     }
 
     /// `/user/orgs` array was fed back: pair the stashed `/user` identity with the parsed

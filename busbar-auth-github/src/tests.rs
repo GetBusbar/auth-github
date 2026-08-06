@@ -458,6 +458,81 @@ fn feedback_without_any_correlator_rejects() {
 
 // ── the pending map never leaks — empty after both failed and completed flows ───────────────────────
 
+/// The pending map must be BOUNDED. Every removal path in this module runs only when the core calls
+/// back into it, and the core abandons a hop chain without re-entering the module whenever a hop
+/// itself fails to execute. So an anonymous caller who starts flows and lets the second hop fail
+/// grew the map without limit, each entry retaining a live GitHub access token for the process
+/// lifetime. There was no cap, no TTL and no eviction, and no test that inserted N entries and
+/// asserted anything about N.
+#[test]
+fn the_pending_map_refuses_to_grow_without_bound() {
+    let module = GithubModule::new(cfg());
+    // Drive PENDING_MAX successful token steps, each with its own correlator and none of them ever
+    // completed: exactly the abandoned-flow shape.
+    for i in 0..PENDING_MAX {
+        let out = module.complete_login(&CompleteLogin {
+            code_verifier: Some(format!("cv-{i}")),
+            token_response: Some(resp(200, r#"{"access_token":"gho_x"}"#)),
+            ..Default::default()
+        });
+        assert!(
+            matches!(out, LoginOutcome::Exchange(_)),
+            "flow {i} should have stashed and emitted the /user hop"
+        );
+    }
+    // One more must be refused rather than admitted, since nothing is sweepable yet.
+    let out = module.complete_login(&CompleteLogin {
+        code_verifier: Some("cv-overflow".to_string()),
+        token_response: Some(resp(200, r#"{"access_token":"gho_x"}"#)),
+        ..Default::default()
+    });
+    assert!(
+        matches!(out, LoginOutcome::Reject),
+        "past the ceiling a new flow must be refused, not admitted: the map holds live bearers"
+    );
+}
+
+/// An EMPTY access token must not be stashed and must not produce a `Bearer ` header with nothing
+/// after it. The filters that reject it had no test: the existing missing-token test feeds a body
+/// with no `access_token` key at all, which is a different branch.
+#[test]
+fn an_empty_access_token_is_refused() {
+    let module = GithubModule::new(cfg());
+    for body in [
+        r#"{"access_token":""}"#,
+        "access_token=&scope=read:org&token_type=bearer",
+    ] {
+        let out = module.complete_login(&CompleteLogin {
+            code_verifier: Some("cv-empty".to_string()),
+            token_response: Some(resp(200, body)),
+            ..Default::default()
+        });
+        assert!(
+            matches!(out, LoginOutcome::Reject),
+            "an empty access_token must be refused, not stashed: body {body}"
+        );
+    }
+}
+
+/// The `/user` body must carry a numeric `id`. That shape check is the only thing standing between
+/// this module and a foreign JSON object that happens to have a `login` field, and only the
+/// opposite direction (an `id` with no `login`) was tested.
+#[test]
+fn a_user_body_without_a_numeric_id_is_refused() {
+    assert!(
+        parse_user(r#"{"login":"alice"}"#).is_none(),
+        "a /user body with no id must not parse into an identity"
+    );
+    assert!(
+        parse_user(r#"{"login":"alice","id":"not-a-number"}"#).is_none(),
+        "a non-numeric id must not parse into an identity"
+    );
+    assert!(
+        parse_user(r#"{"login":"alice","id":42}"#).is_some(),
+        "the well-formed shape must still parse"
+    );
+}
+
 #[test]
 fn pending_map_empty_after_failed_and_completed_flows() {
     let module = GithubModule::new(cfg());
