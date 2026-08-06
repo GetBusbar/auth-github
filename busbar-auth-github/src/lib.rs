@@ -405,11 +405,20 @@ pub fn parse_org_groups(body: &str) -> Option<Vec<String>> {
 /// anywhere reporting a change of person.
 ///
 /// So the stable numeric account id is emitted ALONGSIDE, as the `github:id/<id>` role. That is
-/// purely additive: every existing login binding keeps working untouched, and an operator who wants
-/// an identifier that cannot be transferred can bind to `github:id/12345` and migrate at their own
-/// pace. New deployments should prefer it. The same reasoning applies to `github:org/<org>`, which is
-/// likewise a renameable slug, but GitHub's `/user/orgs` entries are reduced to their login here and
-/// closing that one needs a payload change rather than a one-line addition.
+/// purely additive: every existing login binding keeps working untouched, and an operator can bind to
+/// `github:id/12345` and migrate at their own pace. New deployments should prefer it.
+///
+/// WHAT THIS DOES AND DOES NOT FIX, because the difference is easy to overread. It narrows WHO GETS
+/// GRANTED: a binding on `github:id/<id>` cannot be inherited by whoever re-registers the handle,
+/// because core matches roles by exact lookup and the impostor carries a different numeric role. It
+/// does NOT separate the BUCKETS: the enforcement subject is still `principal.id`, so the
+/// re-registered handle continues to land on the same `user:github:<login>` group, usage ledger and
+/// budget as its previous owner. Separating those means changing the principal id, which is the
+/// breaking change this deliberately avoids.
+///
+/// `github:org/<org>` has the same weakness, being likewise a renameable slug. Closing that one needs
+/// the org's numeric id threaded through `parse_org_groups`, a payload change rather than a one-line
+/// addition.
 pub fn build_principal(user: &GhUser, org_groups: Vec<String>) -> Principal {
     let mut p = Principal::from_id(format!("github:{}", user.login));
     p.name = Some(user.name.clone().unwrap_or_else(|| user.login.clone()));

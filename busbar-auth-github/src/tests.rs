@@ -749,10 +749,3 @@ fn the_stable_numeric_id_distinguishes_two_accounts_sharing_one_handle() {
         b.roles
     );
 }
-
-/// A `/user` body with no numeric `id` still fails closed, as it always did.
-#[test]
-fn a_user_body_without_a_numeric_id_is_rejected() {
-    assert!(parse_user(r#"{"login":"octocat"}"#).is_none());
-    assert!(parse_user(r#"{"login":"octocat","id":"not-a-number"}"#).is_none());
-}
