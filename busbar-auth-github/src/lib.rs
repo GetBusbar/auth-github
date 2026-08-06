@@ -278,6 +278,10 @@ pub fn build_orgs_get(cfg: &GitHubConfig, access_token: &str) -> LoginHop {
 pub struct GhUser {
     /// The GitHub username (`login`) — the handle used in the `github:<login>` identity of record.
     pub login: String,
+    /// The IMMUTABLE numeric account id. A `login` can be renamed, released and re-registered by
+    /// someone else; this cannot. Surfaced as the `github:id/<id>` role so operators have something
+    /// stable to bind to — see [`build_principal`].
+    pub id: i64,
     /// Optional display name.
     pub name: Option<String>,
 }
@@ -357,15 +361,17 @@ pub fn parse_user(body: &str) -> Option<GhUser> {
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())?
         .to_string();
-    // Require a numeric `id` as a shape check: a genuine /user body always carries it, so its absence
-    // means a malformed/foreign body → fail closed. Identity is login-based, so the value is discarded.
-    let _id = v.get("id").and_then(Value::as_i64)?;
+    // Required: a genuine /user body always carries a numeric `id`, so its absence means a
+    // malformed/foreign body → fail closed. It used to be parsed purely as that shape check and
+    // then discarded; it is KEPT now, because it is the only stable thing GitHub gives us about an
+    // account (see `GhUser::id` and `build_principal`).
+    let id = v.get("id").and_then(Value::as_i64)?;
     let name = v
         .get("name")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
-    Some(GhUser { login, name })
+    Some(GhUser { login, id, name })
 }
 
 /// Parse a GitHub `/user/orgs` response (a JSON array of org objects) into `github:org/<org-login>`
@@ -388,15 +394,29 @@ pub fn parse_org_groups(body: &str) -> Option<Vec<String>> {
 /// Assemble the identity [`Principal`] from the parsed `/user` and org groups: id `github:<login>`,
 /// display name (the profile `name`, falling back to the `login`), and the `github:org/<org>` groups.
 ///
-/// DELIBERATE: the id is `github:<login>`, NOT the immutable numeric account id. `github:<login>` (and
-/// `github:org/<org>`) is the documented, human-readable identity format operators bind roles to in
-/// `auth.role_bindings.github:`. A GitHub login CAN be renamed, but that is rare and simply requires
-/// re-binding; switching to the numeric id would silently break every existing operator role binding —
-/// the wrong trade. Identity stays login-based.
+/// The principal id stays `github:<login>`: it is the documented, human-readable identity operators
+/// already bind roles to in `auth.role_bindings.github:`, and changing it would silently break every
+/// existing binding and every persisted `user:github:<login>` group at once.
+///
+/// But a login is NOT a safe thing to anchor identity on, and saying "renaming is rare, just re-bind"
+/// understates it. GitHub RELEASES a handle when an account is renamed or deleted, and anyone may then
+/// register it. A departed employee's handle, taken by an outsider, produces the identical principal
+/// id and inherits that person's role bindings, per-user group, pools and budgets — with nothing
+/// anywhere reporting a change of person.
+///
+/// So the stable numeric account id is emitted ALONGSIDE, as the `github:id/<id>` role. That is
+/// purely additive: every existing login binding keeps working untouched, and an operator who wants
+/// an identifier that cannot be transferred can bind to `github:id/12345` and migrate at their own
+/// pace. New deployments should prefer it. The same reasoning applies to `github:org/<org>`, which is
+/// likewise a renameable slug, but GitHub's `/user/orgs` entries are reduced to their login here and
+/// closing that one needs a payload change rather than a one-line addition.
 pub fn build_principal(user: &GhUser, org_groups: Vec<String>) -> Principal {
     let mut p = Principal::from_id(format!("github:{}", user.login));
     p.name = Some(user.name.clone().unwrap_or_else(|| user.login.clone()));
-    p.roles = org_groups;
+    // FIRST, so it is the one an operator reading a principal sees before the org list.
+    p.roles = Vec::with_capacity(org_groups.len() + 1);
+    p.roles.push(format!("github:id/{}", user.id));
+    p.roles.extend(org_groups);
     p
 }
 

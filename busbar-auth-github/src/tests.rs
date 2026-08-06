@@ -203,9 +203,12 @@ fn complete_login_after_userinfo_identifies() {
     let p = expect_identify(identity_from_user_and_orgs(user, Some(orgs)));
     assert_eq!(p.id, "github:octocat");
     assert_eq!(p.name.as_deref(), Some("The Octocat"));
+    // `github:id/<numeric>` leads: the stable, non-transferable identifier, emitted alongside the
+    // login-based id so operators have something to bind to that a released handle cannot inherit.
     assert_eq!(
         p.roles,
         vec![
+            "github:id/583231".to_string(),
             "github:org/github".to_string(),
             "github:org/octo-org".to_string()
         ]
@@ -261,7 +264,10 @@ fn full_hop_chain_through_the_module_identifies_with_org_groups() {
     });
     let p = expect_identify(r4);
     assert_eq!(p.id, "github:octocat");
-    assert_eq!(p.roles, vec!["github:org/acme".to_string()]);
+    assert_eq!(
+        p.roles,
+        vec!["github:id/1".to_string(), "github:org/acme".to_string()]
+    );
 }
 
 #[test]
@@ -276,7 +282,9 @@ fn fetch_orgs_false_identifies_after_user_without_org_hop() {
     });
     let p = expect_identify(out);
     assert_eq!(p.id, "github:solo");
-    assert!(p.roles.is_empty());
+    // No orgs were fetched, but the stable id role is still emitted -- it comes from /user, not
+    // /user/orgs, so it does not depend on `fetch_orgs`.
+    assert_eq!(p.roles, vec!["github:id/9".to_string()]);
 }
 
 // ── fail-closed ─────────────────────────────────────────────────────────────────────────────────
@@ -408,13 +416,16 @@ fn identity_malformed_orgs_rejects_but_empty_array_identifies() {
     // A valid empty array → Identify with no roles.
     let p = expect_identify(identity_from_user_and_orgs(user, Some("[]")));
     assert_eq!(p.id, "github:octocat");
-    assert!(p.roles.is_empty());
+    assert_eq!(p.roles, vec!["github:id/1".to_string()]);
     // A valid array → groups parsed.
     let p = expect_identify(identity_from_user_and_orgs(
         user,
         Some(r#"[{"login":"acme"}]"#),
     ));
-    assert_eq!(p.roles, vec!["github:org/acme".to_string()]);
+    assert_eq!(
+        p.roles,
+        vec!["github:id/1".to_string(), "github:org/acme".to_string()]
+    );
 }
 
 #[test]
@@ -700,4 +711,48 @@ fn authenticate_passes_opaque_bearer() {
     assert_eq!(module.authenticate(None), AuthOutcome::Pass);
     assert_eq!(module.name(), "github");
     assert!(!module.cacheable());
+}
+
+/// A released GitHub handle must not silently inherit the previous owner's bindings.
+///
+/// GitHub RELEASES a login when an account is renamed or deleted, and anyone may then register it.
+/// The principal id is `github:<login>`, so a departed employee's handle taken by an outsider yields
+/// the IDENTICAL principal id and inherits their role bindings, per-user group, pools and budgets.
+/// Changing the id would break every existing operator binding at once, so the stable numeric account
+/// id is emitted alongside as `github:id/<id>`: purely additive, and an operator who binds to it gets
+/// an identifier that cannot be transferred with a handle.
+#[test]
+fn the_stable_numeric_id_distinguishes_two_accounts_sharing_one_handle() {
+    let original = r#"{"login":"alice","id":1001,"name":"Alice"}"#;
+    let impostor = r#"{"login":"alice","id":90210,"name":"Not Alice"}"#;
+
+    let a = expect_identify(identity_from_user_and_orgs(original, None));
+    let b = expect_identify(identity_from_user_and_orgs(impostor, None));
+
+    // The login-based identity CANNOT tell them apart -- this is the hazard, stated as a test.
+    assert_eq!(a.id, b.id, "the handle is the same, so the id is the same");
+
+    // The numeric role can, and it is present on both so a binding to it is decidable.
+    assert!(
+        a.roles.contains(&"github:id/1001".to_string()),
+        "{:?}",
+        a.roles
+    );
+    assert!(
+        b.roles.contains(&"github:id/90210".to_string()),
+        "{:?}",
+        b.roles
+    );
+    assert!(
+        !b.roles.contains(&"github:id/1001".to_string()),
+        "the impostor must not carry the original's stable id: {:?}",
+        b.roles
+    );
+}
+
+/// A `/user` body with no numeric `id` still fails closed, as it always did.
+#[test]
+fn a_user_body_without_a_numeric_id_is_rejected() {
+    assert!(parse_user(r#"{"login":"octocat"}"#).is_none());
+    assert!(parse_user(r#"{"login":"octocat","id":"not-a-number"}"#).is_none());
 }
