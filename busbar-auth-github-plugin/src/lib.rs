@@ -9,7 +9,7 @@
 //!
 //! All the GitHub logic (authorize-URL, the token-exchange + `/user` + `/user/orgs` hop chain, the
 //! identity mapping) lives in the `busbar-auth-github` `lib` crate (which a custom build can also link
-//! statically). Here we only adapt the engine's JSON config into a [`GithubModule`] and hand the
+//! statically). This crate only adapts the engine's JSON config into a [`GithubModule`] and hands the
 //! login-capable trait object to the SDK via [`busbar_plugin_sdk::export_login_plugin!`] — the LOGIN
 //! export macro (NOT `export_auth_plugin!`, which would mask the browser-login capability behind the
 //! verify-only adapter). The macro emits the six extern-C symbols the loader resolves (`busbar_abi`,

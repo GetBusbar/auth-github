@@ -454,10 +454,10 @@ impl GithubModule {
 /// them overwrite each other's stashed token + identity across accounts. Only `code_verifier`/`code`
 /// distinguish one in-flight flow from another.
 ///
-/// FAIL-CLOSED: returns `None` when both per-flow correlators are absent/empty. An empty-string key was
-/// previously used as a fallback, but that made every uncorrelatable concurrent flow share the one `""`
-/// slot and interleave/overwrite each other's stashed token + identity. An uncorrelatable multi-hop
-/// flow cannot be safely threaded, so the hop handlers `Reject` on `None` instead.
+/// FAIL-CLOSED: returns `None` when both per-flow correlators are absent/empty. An empty-string
+/// fallback key would make every uncorrelatable concurrent flow share one `""` slot and
+/// interleave/overwrite each other's stashed token + identity. An uncorrelatable multi-hop flow
+/// cannot be safely threaded, so the hop handlers `Reject` on `None` instead.
 fn correlation_key(req: &CompleteLogin) -> Option<String> {
     req.code_verifier
         .clone()
@@ -583,8 +583,8 @@ impl GithubModule {
         }
         let mut pending = self.pending.lock().unwrap();
         // Fail-closed: no stashed entry means the token step never ran for this key (a flow-state loss
-        // or an out-of-order /user body). Do NOT fabricate a default empty-token `PendingLogin` — that
-        // would emit a `/user/orgs` hop with an empty `Bearer`. Reject instead, mirroring `after_orgs`.
+        // or an out-of-order /user body). Fabricating a default empty-token `PendingLogin` would emit
+        // a `/user/orgs` hop with an empty `Bearer`, so this rejects instead, mirroring `after_orgs`.
         let Some(entry) = pending.get_mut(key) else {
             return LoginOutcome::Reject;
         };

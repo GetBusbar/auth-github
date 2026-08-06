@@ -159,8 +159,8 @@ fn complete_login_after_token_returns_userinfo_get_hop() {
     assert_eq!(hop.secret_form_field, None);
     assert!(hop.form.is_empty());
 
-    // RED→GREEN: the `/user` hop itself carries the Authorization: Bearer + User-Agent headers
-    // (ABI v2 `headers` field), not just what `userinfo_headers` computes in isolation.
+    // The `/user` hop itself must carry the Authorization: Bearer + User-Agent headers (ABI v2
+    // `headers` field), not just what `userinfo_headers` computes in isolation.
     assert!(hop
         .headers
         .iter()
@@ -388,14 +388,14 @@ fn parse_org_groups_maps_and_skips_bad_entries() {
     );
     // A legitimately-empty array → Some(empty): login succeeds with zero org groups.
     assert_eq!(parse_org_groups("[]"), Some(Vec::new()));
-    // Fix 1 (fail-closed): a non-array body or malformed JSON is NOT a silent empty — it is None so
-    // the caller Rejects (a truncated orgs response must not drop the user's org groups).
+    // Fail-closed: a non-array body or malformed JSON is NOT a silent empty — it is None so the
+    // caller Rejects (a truncated orgs response must not drop the user's org groups).
     assert!(parse_org_groups(r#"{"message":"Not Found"}"#).is_none());
     assert!(parse_org_groups("[{bad").is_none());
     assert!(parse_org_groups("not json at all").is_none());
 }
 
-// ── Fix 1: malformed /user/orgs fails closed; valid empty array is fine ─────────────────────────────
+// ── malformed /user/orgs fails closed; a valid empty array is fine ──────────────────────────────────
 
 #[test]
 fn identity_malformed_orgs_rejects_but_empty_array_identifies() {
@@ -440,7 +440,7 @@ fn full_chain_malformed_orgs_rejects() {
     assert_eq!(out, LoginOutcome::Reject);
 }
 
-// ── Fix 2: an uncorrelatable feedback call fails closed (no shared "" slot) ─────────────────────────
+// ── an uncorrelatable feedback call fails closed (no shared "" slot) ────────────────────────────────
 
 #[test]
 fn feedback_without_any_correlator_rejects() {
@@ -456,7 +456,7 @@ fn feedback_without_any_correlator_rejects() {
     assert_eq!(module.pending.lock().unwrap().len(), 0);
 }
 
-// ── Fix 3: the pending map never leaks — empty after both failed and completed flows ────────────────
+// ── the pending map never leaks — empty after both failed and completed flows ───────────────────────
 
 #[test]
 fn pending_map_empty_after_failed_and_completed_flows() {
@@ -511,7 +511,7 @@ fn pending_map_empty_after_failed_and_completed_flows() {
     );
 }
 
-// ── Fix 4: /user/orgs hop is paginated (per_page=100) ───────────────────────────────────────────────
+// ── the /user/orgs hop is paginated (per_page=100) ──────────────────────────────────────────────────
 
 #[test]
 fn orgs_hop_url_requests_per_page_100() {
@@ -523,7 +523,7 @@ fn orgs_hop_url_requests_per_page_100() {
     );
 }
 
-// ── Round-2 Fix 1: redirect_uri is a deployment-wide constant, NOT a per-flow correlator ────────────
+// ── redirect_uri is a deployment-wide constant, NOT a per-flow correlator ───────────────────────────
 
 #[test]
 fn feedback_with_only_redirect_uri_rejects_no_shared_slot() {
@@ -555,7 +555,7 @@ fn feedback_with_only_redirect_uri_rejects_no_shared_slot() {
     assert_eq!(module.pending.lock().unwrap().len(), 0);
 }
 
-// ── Round-2 Fix 2: an orgs array with no prior /user stash (missing stashed user) fails closed ───────
+// ── an orgs array with no prior /user stash (missing stashed user) fails closed ─────────────────────
 
 #[test]
 fn orgs_array_as_first_feedback_without_stashed_user_rejects() {
@@ -571,7 +571,7 @@ fn orgs_array_as_first_feedback_without_stashed_user_rejects() {
     assert_eq!(module.pending.lock().unwrap().len(), 0);
 }
 
-// ── Round-2 Fix 3: a non-2xx AFTER a stash removes the stashed entry (observable remove) ─────────────
+// ── a non-2xx AFTER a stash removes the stashed entry (observable remove) ───────────────────────────
 
 #[test]
 fn non_2xx_after_stash_removes_pending_entry() {
@@ -602,7 +602,7 @@ fn non_2xx_after_stash_removes_pending_entry() {
     );
 }
 
-// ── Round-2 Fix 4: a /user body with no prior token stash fails closed (no fabricated empty token) ───
+// ── a /user body with no prior token stash fails closed (no fabricated empty token) ─────────────────
 
 #[test]
 fn userinfo_as_first_feedback_without_stashed_token_rejects() {
