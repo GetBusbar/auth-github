@@ -277,6 +277,18 @@ fn github_get_flow_mints_key_via_core_executed_hops() {
     )
     .unwrap();
 
+    // busbar 1.5.3 retired both `auth.methods:` and INLINE entries under `auth.admin_auth:`: an
+    // identity provider is now defined ONCE under `identity-providers:` (its `browser_login` and
+    // `settings` hanging off that one definition) and referenced elsewhere by bare name. A config
+    // still carrying the old shape is not merely deprecated — core recognises it as a 1.x config
+    // and refuses to start at all, so this fixture described a gateway that could never boot and
+    // the test failed a long way from the cause, as `busbar exited early during health poll: exit
+    // status: 1`. The shape below is what core's own `--migrate-config` produces for the previous
+    // fixture, then confirmed by feeding the rendered YAML back through `busbar --validate`.
+    //
+    // Note `token_base` sits under `settings:`, NOT under `browser_login:` where the migrator puts
+    // it; the migrator's own output is rejected by `--validate` with "unknown field `token_base`".
+    // That is a core bug, not a choice made here.
     let config = work.join("config.yaml");
     std::fs::write(
         &config,
@@ -284,11 +296,14 @@ fn github_get_flow_mints_key_via_core_executed_hops() {
             "listen: \"127.0.0.1:{data_port}\"\n\
              public_url: \"https://gate.busbar.e2e\"\n\
              auth:\n  key_ttl: \"7d\"\n  signing_key: {{ file: \"{signing}\" }}\n  chain:\n    - keys\n\
-             \x20 admin_auth:\n    - admin-tokens: {{ token: {{ env: BUSBAR_ADMIN_TOKEN }} }}\n\
-             \x20 methods:\n    github:\n      browser_login:\n        client_id: \"Iv1.e2eclient\"\n\
-             \x20       client_secret: {{ env: BUSBAR_GH_CLIENT_SECRET }}\n\
-             \x20     token_base: \"{wm}\"\n      api_base: \"{wm}\"\n      authorize_base: \"{wm}\"\n\
+             \x20 admin_auth: [admin-tokens]\n\
              \x20 role_bindings:\n    github:\n      \"github:org/testorg\":\n        group: eng-team\n\
+             identity-providers:\n\
+             \x20 admin-tokens: {{ module: admin-tokens, token: {{ env: BUSBAR_ADMIN_TOKEN }} }}\n\
+             \x20 github:\n    module: github\n\
+             \x20   settings:\n      token_base: \"{wm}\"\n      api_base: \"{wm}\"\n      authorize_base: \"{wm}\"\n\
+             \x20   browser_login:\n      client_id: \"Iv1.e2eclient\"\n\
+             \x20     client_secret: {{ env: BUSBAR_GH_CLIENT_SECRET }}\n\
              plugins:\n  enabled: true\n  dir: {plugins}\n  trust:\n    allow_unsigned: true\n\
              groups:\n  eng-team:\n    limits:\n      - {{ requests: 1000000, per: day }}\n\
              \x20   child_default:\n      limits:\n        - {{ budget: 5000, per: month }}\n        - {{ requests: 1000, per: day }}\n\
