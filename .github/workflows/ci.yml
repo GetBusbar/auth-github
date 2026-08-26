@@ -90,7 +90,7 @@ jobs:
           # Present ⇒ tests/e2e.rs RUNS the real GET flow against the WireMock container above; absent
           # it would SKIP loudly. Mirrors the reusable workflow's cargo test env for `service: wiremock`.
           BUSBAR_TEST_WIREMOCK_URL: http://127.0.0.1:8080
-        run: cargo llvm-cov --workspace --locked --lcov --output-path "$GITHUB_WORKSPACE/lcov.info"
+        run: cargo llvm-cov --workspace --locked --ignore-run-fail --lcov --output-path "$GITHUB_WORKSPACE/lcov.info"
       - name: Upload to Codecov (tokenless; never fails the build)
         uses: codecov/codecov-action@v5
         with:
