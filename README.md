@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # busbar-auth-github
 
+<a href="https://codecov.io/gh/GetBusbar/auth-github"><img src="https://codecov.io/gh/GetBusbar/auth-github/branch/dev/graph/badge.svg" alt="Coverage"></a>
+
 **GitHub-OAuth login for busbar** — a login-capable auth plugin (auth ABI v2, 1.5.2
 token-exchange). A user signs in with GitHub; busbar establishes their identity as
 `github:<login>` with `github:org/<org>` group memberships, then resolves those groups to policy

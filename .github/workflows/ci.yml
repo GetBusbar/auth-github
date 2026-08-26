@@ -24,3 +24,76 @@ jobs:
       # The 1.5.2 auth ABI v2 + hosted GET /auth/token login flow live on busbar `dev` (the release
       # candidate), not yet `main` — build the sibling against dev so the plugin + its live e2e compile
       # and run. Flip back to the default (main) once 1.5.2 ships. (See .busbar-ref's placeholder note.)
+
+  # COVERAGE — an instrumented run of this plugin's own workspace suite, uploaded to Codecov for the
+  # README badge and per-PR line-coverage context. Deliberately ADDITIVE and NON-GATING:
+  #
+  #   * It is a SEPARATE job that the reusable `ci` call above does NOT depend on, and nothing depends
+  #     on it, so it is never a required check and can never turn dev/qa/main red. Coverage reporting
+  #     is an OBSERVATION, not a correctness gate — the gate is the reusable plugin-ci `ci` job, which
+  #     this must never be able to mask or block.
+  #   * `cargo llvm-cov` compiles with `-C instrument-coverage` and drops `*.profraw` files; keeping it
+  #     out of the reusable pipeline avoids perturbing that pipeline's own build/signoff steps.
+  #   * The upload uses `fail_ci_if_error: false`, so a Codecov outage or a tokenless rate-limit is a
+  #     no-op here, never a red job — a reporting dependency must never fail the build.
+  #   * FULL TIER ONLY — the same `if:` guard the core busbar repo's own coverage job uses: it runs on
+  #     every PR and on push to main/dev/qa, so a feature-branch push does not pay for a full
+  #     instrumented rebuild.
+  #
+  # It MIRRORS the reusable workflow's plugin + sibling-busbarAI dual checkout — the Cargo path deps
+  # (`../../busbarAI/crates/...`) require busbar checked out as a sibling directory named `busbarAI`,
+  # so the workspace can compile at all — and the `service: wiremock` container + BUSBAR_TEST_WIREMOCK_URL,
+  # so tests/e2e.rs' live GitHub-OAuth GET flow is covered here too rather than skipped.
+  coverage:
+    name: coverage (llvm-cov · codecov)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'push' || contains(fromJSON('["refs/heads/main", "refs/heads/dev", "refs/heads/qa"]'), github.ref)
+    services:
+      # Ready-made WireMock — the GitHub-OAuth token/user/orgs endpoints for tests/e2e.rs. Same
+      # digest-pinned image the reusable plugin-ci workflow boots for this repo's `service: wiremock`
+      # arm; no Docker health-cmd (the image has no curl/wget), the test polls /__admin for readiness.
+      wiremock:
+        image: wiremock/wiremock:3.9.2@sha256:d13997cd7b52583528a766019cfe7d4e91c4d224a67bdaa6f60efbb532f32176
+        ports:
+          - 8080:8080
+    steps:
+      - name: Checkout the plugin
+        uses: actions/checkout@v7
+        with:
+          path: plugin
+      # Sibling busbar checkout the plugin's local path dependencies resolve against — busbar `dev`,
+      # matching the reusable `ci` job's busbar_ref for this repo's dev branch (the 1.5.2 RC engine the
+      # plugin + its live e2e are built against).
+      - name: Checkout busbar (sibling path dependency)
+        uses: actions/checkout@v7
+        with:
+          repository: GetBusbar/busbar
+          ref: dev
+          path: busbarAI
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Both checkouts use `path:`, so the two Cargo workspaces live at plugin/ and busbarAI/,
+          # not at the checkout root — `workspaces:` must name them or the cache is a silent total miss.
+          workspaces: |
+            plugin
+            busbarAI
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Collect coverage (workspace, live GitHub-OAuth e2e wired to WireMock)
+        working-directory: plugin
+        env:
+          # Present ⇒ tests/e2e.rs RUNS the real GET flow against the WireMock container above; absent
+          # it would SKIP loudly. Mirrors the reusable workflow's cargo test env for `service: wiremock`.
+          BUSBAR_TEST_WIREMOCK_URL: http://127.0.0.1:8080
+        run: cargo llvm-cov --workspace --locked --lcov --output-path "$GITHUB_WORKSPACE/lcov.info"
+      - name: Upload to Codecov (tokenless; never fails the build)
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          slug: GetBusbar/auth-github
+          fail_ci_if_error: false
