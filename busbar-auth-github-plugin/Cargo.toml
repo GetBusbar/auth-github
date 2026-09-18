@@ -16,8 +16,8 @@ crate-type = ["cdylib", "rlib"]   # cdylib for the C ABI delivery; rlib so the u
 # logic lives here, not in busbarAI). Only busbar-api/busbar-plugin-sdk still reach into busbarAI —
 # INTERIM local path dependencies into a sibling checkout, since busbarAI isn't public yet; once it
 # ships publicly these become git (pinned rev/tag) or crates.io dependencies instead.
-busbar-api = { path = "../../busbarAI/crates/api" }
-busbar-plugin-sdk = { path = "../../busbarAI/crates/plugin-sdk" }
+busbar-api = { path = "../../busbar/crates/api" }
+busbar-plugin-sdk = { path = "../../busbar/crates/plugin-sdk" }
 busbar-auth-github = { path = "../busbar-auth-github" }
 serde_json = "1"
 
@@ -26,6 +26,6 @@ serde_json = "1"
 # filename helper), pack it with the real busbar-plugin-pack BINARY (spawned), and drive real blocking
 # HTTP against a spawned real busbar binary + a WireMock service container. INTERIM local path deps
 # into the sibling busbarAI checkout, same rationale as the runtime deps above.
-busbar-plugin-loader = { path = "../../busbarAI/crates/plugin-loader" }
+busbar-plugin-loader = { path = "../../busbar/crates/plugin-loader" }
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
