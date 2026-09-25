@@ -61,14 +61,17 @@ jobs:
         uses: actions/checkout@v7
         with:
           path: plugin
-      # Sibling busbar checkout the plugin's local path dependencies resolve against — busbar `dev`,
-      # matching the reusable `ci` job's busbar_ref for this repo's dev branch (the 1.5.2 RC engine the
-      # plugin + its live e2e are built against).
-      - name: Checkout busbar (sibling path dependency)
+      # Sibling busbar checkout the plugin's local path dependencies resolve against, pinned to field 1
+      # of .busbar-ref — the engine Cargo.lock was resolved against (so `--locked` holds) and the one
+      # this repo's release builds; a moving branch here drifts from the lock and fails `--locked`.
+      - name: Resolve busbar ref from .busbar-ref
+        id: ref
+        run: echo "sha=$(cut -d' ' -f1 plugin/.busbar-ref)" >> "$GITHUB_OUTPUT"
+      - name: Checkout busbar (sibling path dependency, pinned to .busbar-ref)
         uses: actions/checkout@v7
         with:
           repository: GetBusbar/busbar
-          ref: dev
+          ref: ${{ steps.ref.outputs.sha }}
           path: busbar
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
