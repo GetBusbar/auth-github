@@ -40,8 +40,8 @@ jobs:
   #     every PR and on push to main/dev/qa, so a feature-branch push does not pay for a full
   #     instrumented rebuild.
   #
-  # It MIRRORS the reusable workflow's plugin + sibling-busbarAI dual checkout — the Cargo path deps
-  # (`../../busbarAI/crates/...`) require busbar checked out as a sibling directory named `busbarAI`,
+  # It MIRRORS the reusable workflow's plugin + sibling-busbar dual checkout — the Cargo path deps
+  # (`../../busbar/crates/...`) require busbar checked out as a sibling directory named `busbar`,
   # so the workspace can compile at all — and the `service: wiremock` container + BUSBAR_TEST_WIREMOCK_URL,
   # so tests/e2e.rs' live GitHub-OAuth GET flow is covered here too rather than skipped.
   coverage:
@@ -69,7 +69,7 @@ jobs:
         with:
           repository: GetBusbar/busbar
           ref: dev
-          path: busbarAI
+          path: busbar
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -77,11 +77,11 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          # Both checkouts use `path:`, so the two Cargo workspaces live at plugin/ and busbarAI/,
+          # Both checkouts use `path:`, so the two Cargo workspaces live at plugin/ and busbar/,
           # not at the checkout root — `workspaces:` must name them or the cache is a silent total miss.
           workspaces: |
             plugin
-            busbarAI
+            busbar
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Collect coverage (workspace, live GitHub-OAuth e2e wired to WireMock)
