@@ -93,7 +93,7 @@ cargo test
 ```
 
 The `busbar-auth-github` crate is the reusable logic (statically linkable); `busbar-auth-github-plugin`
-is the thin `cdylib` that exports the auth C ABI via `busbar_plugin_sdk::export_login_plugin!` (the
+is the thin `cdylib` that exports the auth C ABI via `busbar_contract::export_login_plugin!` (the
 LOGIN export macro — not `export_auth_plugin!`, which would mask browser-login behind the verify-only
 adapter).
 

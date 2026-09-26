@@ -5,7 +5,7 @@
 //! drive the pure helpers and the `LoginModule` step machine directly with fixture response bodies.
 
 use super::*;
-use busbar_api::{BeginLogin, CompleteLogin, LoginHttpResponse, LoginOutcome};
+use busbar_contract::auth::{BeginLogin, CompleteLogin, LoginHttpResponse, LoginOutcome};
 
 fn cfg() -> GitHubConfig {
     GitHubConfig {
@@ -707,8 +707,8 @@ fn userinfo_as_first_feedback_without_stashed_token_rejects() {
 #[test]
 fn authenticate_passes_opaque_bearer() {
     let module = GithubModule::new(cfg());
-    assert_eq!(module.authenticate(Some("gho_whatever")), AuthOutcome::Pass);
-    assert_eq!(module.authenticate(None), AuthOutcome::Pass);
+    assert_eq!(module.authenticate(Some("gho_whatever")), AuthVerdict::Pass);
+    assert_eq!(module.authenticate(None), AuthVerdict::Pass);
     assert_eq!(module.name(), "github");
     assert!(!module.cacheable());
 }

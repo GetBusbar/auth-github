@@ -6,7 +6,7 @@
 //! own job and is covered by that crate's tests; these only cover what `open` does with the config.
 
 use super::open;
-use busbar_api::{AuthPlugin, BeginLogin, LoginOutcome};
+use busbar_contract::auth::{AuthPlugin, BeginLogin, LoginOutcome};
 
 fn expect_err(result: Result<Box<dyn AuthPlugin>, String>) -> String {
     match result {

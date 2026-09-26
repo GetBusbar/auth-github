@@ -29,17 +29,17 @@
 //!
 //! ## Authenticated GET hops (auth ABI v2)
 //!
-//! [`busbar_api::LoginHop`] carries a `headers` field (auth ABI v2), and GitHub REQUIRES an
+//! [`busbar_contract::auth::LoginHop`] carries a `headers` field (auth ABI v2), and GitHub REQUIRES an
 //! `Authorization: Bearer <token>` and a `User-Agent` header on every REST call. [`userinfo_headers`]
 //! computes those headers; [`build_userinfo_get`] and [`build_orgs_get`] attach them directly to the
 //! `/user` and `/user/orgs` hops. The CORE sanitizes and attaches them (CR/LF/NUL + hop-control
 //! headers rejected; host must be operator-allowlisted) before executing the hop.
 
-use busbar_api::Redacted;
-use busbar_api::{
-    AuthModule, AuthOutcome, BeginLogin, CompleteLogin, LoginHop, LoginHttpResponse, LoginModule,
+use busbar_contract::auth::{
+    AuthModule, AuthVerdict, BeginLogin, CompleteLogin, LoginHop, LoginHttpResponse, LoginModule,
     LoginOutcome, Principal,
 };
+use busbar_contract::Redacted;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -520,8 +520,8 @@ impl AuthModule for GithubModule {
     /// mechanism — so a presented bearer is NOT this module's to judge: `Pass` (defer to the next chain
     /// module / the busbar key the login flow minted). Never `Reject` (that would break the chain for
     /// every non-GitHub credential).
-    fn authenticate(&self, _candidate: Option<&str>) -> AuthOutcome {
-        AuthOutcome::Pass
+    fn authenticate(&self, _candidate: Option<&str>) -> AuthVerdict {
+        AuthVerdict::Pass
     }
 
     fn cacheable(&self) -> bool {

@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Busbar Inc and contributors
 
 //! The **GitHub-OAuth login module as a droppable busbar plugin** — a `cdylib` that exports the auth
-//! C ABI ([`busbar_plugin_abi::auth`]), LOGIN-CAPABLE (auth ABI v2). Build it, drop the resulting
+//! C ABI ([`busbar_contract::abi::cold::auth`]), LOGIN-CAPABLE (auth ABI v2). Build it, drop the resulting
 //! `.so`/`.dll`/`.dylib` into the engine's plugins folder, add `github` to `auth.chain` with a
 //! `browser_login` block (holding the confidential-client `client_secret` the CORE injects), and
 //! configure the module `config`; the engine loads it in-process at boot over the auth ABI.
@@ -10,13 +10,13 @@
 //! All the GitHub logic (authorize-URL, the token-exchange + `/user` + `/user/orgs` hop chain, the
 //! identity mapping) lives in the `busbar-auth-github` `lib` crate (which a custom build can also link
 //! statically). This crate only adapts the engine's JSON config into a [`GithubModule`] and hands the
-//! login-capable trait object to the SDK via [`busbar_plugin_sdk::export_login_plugin!`] — the LOGIN
+//! login-capable trait object to the SDK via [`busbar_contract::export_login_plugin!`] — the LOGIN
 //! export macro (NOT `export_auth_plugin!`, which would mask the browser-login capability behind the
 //! verify-only adapter). The macro emits the six extern-C symbols the loader resolves (`busbar_abi`,
 //! `busbar_plugin_kind`, `busbar_open`, `busbar_call`, `busbar_free`, `busbar_close`).
 
-use busbar_api::AuthPlugin;
 use busbar_auth_github::{GitHubConfig, GithubModule};
+use busbar_contract::auth::AuthPlugin;
 
 /// Construct a GitHub login module from the JSON config the engine passes through `open`. Shape:
 ///
@@ -45,7 +45,7 @@ fn open(cfg: &str) -> Result<Box<dyn AuthPlugin>, String> {
     Ok(Box::new(GithubModule::new(cfg)))
 }
 
-busbar_plugin_sdk::export_login_plugin!(open);
+busbar_contract::export_login_plugin!(open);
 
 #[cfg(test)]
 mod tests;
