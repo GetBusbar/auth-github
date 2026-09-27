@@ -148,5 +148,5 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
-          slug: GetBusbar/auth-github
+          slug: GetBusbar/busbar-auth-github
           fail_ci_if_error: false
