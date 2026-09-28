@@ -118,7 +118,7 @@ fn pack_github(pack_bin: &std::path::Path, so: &std::path::Path, out: &std::path
             "--lib",
             so.to_str().unwrap(),
             "--name",
-            "busbar-auth-github-plugin",
+            "busbar-auth-github",
             "--alias",
             "github",
             "--kind",
