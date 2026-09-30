@@ -1,0 +1,492 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (C) 2026 Busbar Inc and contributors
+
+//! The plugin-owned login, driven over a scripted exchange. Hermetic: no network. Each arm states
+//! the 1.5.5 answer it keeps (the core hop loop in busbar v1.5.5 `auth/token.rs` over the v1.0.3
+//! step machine).
+
+use super::*;
+use crate::GithubModule;
+use busbar_contract::auth::LoginModule;
+use std::collections::HashMap;
+
+const SECRET: &str = "s3cr3t-client-value";
+const TOKEN: &str = "gho_live_bearer";
+
+/// The operator writes every base out (as a 1.5.5 GitHub method had to, for its hops to pass).
+const SETTINGS: &str = r#"{
+    "client_id": "Iv1.client",
+    "api_base": "https://api.github.com",
+    "authorize_base": "https://github.com",
+    "token_base": "https://github.com"
+}"#;
+
+const TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
+const USER_URL: &str = "https://api.github.com/user";
+const ORGS_URL: &str = "https://api.github.com/user/orgs?per_page=100";
+
+/// A scripted one-shot exchange: per target, the answer; optionally PENDING once per request first
+/// (the re-issue gets the stored answer). Records every issue.
+#[derive(Default)]
+struct Script {
+    answers: HashMap<String, Fetched>,
+    pend_first: bool,
+    pended: Vec<HopRequest>,
+    issued: Vec<HopRequest>,
+}
+
+impl Script {
+    fn new() -> Self {
+        Self::default()
+    }
+    fn answer(mut self, target: &str, status: u16, body: &str) -> Self {
+        self.answers.insert(
+            target.to_string(),
+            Fetched::Ready(HopResponse {
+                status,
+                body: body.as_bytes().to_vec(),
+            }),
+        );
+        self
+    }
+    fn unreachable(mut self, target: &str) -> Self {
+        self.answers
+            .insert(target.to_string(), Fetched::Unreachable);
+        self
+    }
+    fn happy() -> Self {
+        Self::new()
+            .answer(
+                TOKEN_URL,
+                200,
+                &format!(r#"{{"access_token":"{TOKEN}","token_type":"bearer"}}"#),
+            )
+            .answer(USER_URL, 200, r#"{"login":"octocat","id":1,"name":"Octo"}"#)
+            .answer(ORGS_URL, 200, r#"[{"login":"acme"},{"login":"widgets"}]"#)
+    }
+    fn targets(&self) -> Vec<&str> {
+        self.issued.iter().map(|r| r.target.as_str()).collect()
+    }
+}
+
+impl Exchange for Script {
+    fn exchange(&mut self, request: &HopRequest) -> Fetched {
+        self.issued.push(request.clone());
+        if self.pend_first && !self.pended.contains(request) {
+            self.pended.push(request.clone());
+            return Fetched::Pending;
+        }
+        self.answers
+            .get(&request.target)
+            .cloned()
+            .unwrap_or(Fetched::Unreachable)
+    }
+}
+
+fn login() -> GithubLogin {
+    GithubLogin::open(SETTINGS, Some(SECRET)).expect("opens")
+}
+
+fn flow(l: &GithubLogin) -> LoginFlow {
+    l.start(
+        Some("the-code"),
+        Some("https://node.example/auth/token"),
+        Some("the-verifier"),
+    )
+}
+
+fn run(l: &GithubLogin, script: &mut Script) -> LoginStep {
+    let mut f = flow(l);
+    l.drive(&mut f, script)
+}
+
+fn identity(step: LoginStep) -> Principal {
+    match step {
+        LoginStep::Identity(p) => p,
+        other => panic!("expected an identity, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_member_signs_in_with_org_groups() {
+    let l = login();
+    let mut s = Script::happy();
+    let p = identity(run(&l, &mut s));
+    assert_eq!(p.id, "github:octocat");
+    assert_eq!(p.name.as_deref(), Some("Octo"));
+    assert_eq!(
+        p.roles,
+        vec![
+            "github:org/acme".to_string(),
+            "github:org/widgets".to_string()
+        ]
+    );
+    assert_eq!(s.targets(), vec![TOKEN_URL, USER_URL, ORGS_URL]);
+}
+
+/// The token exchange as 1.5.5's core sent it: the form in the module's order with the secret
+/// injected into its slot, serde_urlencoded bytes, `content-type` then the default `accept`.
+#[test]
+fn the_token_exchange_carries_the_plugins_own_secret_in_1_5_5_bytes() {
+    let l = login();
+    let mut s = Script::happy();
+    run(&l, &mut s);
+    let token = &s.issued[0];
+    assert_eq!(token.method, "POST");
+    assert_eq!(token.target, TOKEN_URL);
+    assert_eq!(token.timeout_ms, 10_000);
+    assert_eq!(
+        String::from_utf8(token.body.clone()).unwrap(),
+        "client_id=Iv1.client&code=the-code\
+         &redirect_uri=https%3A%2F%2Fnode.example%2Fauth%2Ftoken\
+         &code_verifier=the-verifier&client_secret=s3cr3t-client-value"
+    );
+    assert_eq!(
+        token.fields,
+        vec![
+            (
+                "content-type".to_string(),
+                "application/x-www-form-urlencoded".to_string()
+            ),
+            ("accept".to_string(), "*/*".to_string()),
+        ]
+    );
+}
+
+/// The authenticated GETs: an empty form (so `content-type` and an empty body, as reqwest's
+/// `.form(&[])` sent), then the module's headers, lowercase, in order.
+#[test]
+fn the_rest_gets_carry_the_bearer_and_user_agent() {
+    let l = login();
+    let mut s = Script::happy();
+    run(&l, &mut s);
+    for get in &s.issued[1..] {
+        assert_eq!(get.method, "GET");
+        assert!(get.body.is_empty());
+        assert_eq!(
+            get.fields,
+            vec![
+                (
+                    "content-type".to_string(),
+                    "application/x-www-form-urlencoded".to_string()
+                ),
+                ("authorization".to_string(), format!("Bearer {TOKEN}")),
+                ("user-agent".to_string(), "busbar".to_string()),
+                (
+                    "accept".to_string(),
+                    "application/vnd.github+json".to_string()
+                ),
+            ]
+        );
+    }
+}
+
+/// RED ARM (non-member): a user outside the org signs in, as in 1.5.5, WITHOUT that org's group, so
+/// an `auth.role_bindings.github: "github:org/acme"` binding never admits them. Membership is the
+/// org list GitHub answers; the plugin invents none.
+#[test]
+fn red_a_non_member_carries_no_group_for_the_org() {
+    let l = login();
+    let mut s = Script::happy().answer(ORGS_URL, 200, r#"[{"login":"elsewhere"}]"#);
+    let p = identity(run(&l, &mut s));
+    assert!(
+        !p.roles.contains(&"github:org/acme".to_string()),
+        "{:?}",
+        p.roles
+    );
+    assert_eq!(p.roles, vec!["github:org/elsewhere".to_string()]);
+
+    // A member of nothing: identified, zero groups (a VALID empty list).
+    let mut s = Script::happy().answer(ORGS_URL, 200, "[]");
+    assert!(identity(run(&l, &mut s)).roles.is_empty());
+}
+
+/// RED ARM (revoked token): GitHub answers `/user` 401 for a revoked or expired bearer. 1.5.5 fed
+/// the 401 back and the module declined ("Sign-in was declined"): a bad credential, never an
+/// outage, and the org hop is never made with a dead token.
+#[test]
+fn red_a_revoked_token_is_declined_and_goes_no_further() {
+    let l = login();
+    let mut s = Script::happy().answer(
+        USER_URL,
+        401,
+        r#"{"message":"Bad credentials","status":"401"}"#,
+    );
+    assert_eq!(run(&l, &mut s), LoginStep::BadCredential);
+    assert_eq!(s.targets(), vec![TOKEN_URL, USER_URL]);
+
+    // Revoked between /user and /user/orgs: declined as well.
+    let mut s = Script::happy().answer(ORGS_URL, 401, r#"{"message":"Bad credentials"}"#);
+    assert_eq!(run(&l, &mut s), LoginStep::BadCredential);
+}
+
+#[test]
+fn a_bad_code_answered_200_with_an_error_body_is_declined() {
+    // GitHub answers a bad/expired code with HTTP 200 and `{"error": ...}`: no token, declined.
+    let l = login();
+    let mut s = Script::happy().answer(TOKEN_URL, 200, r#"{"error":"bad_verification_code"}"#);
+    assert_eq!(run(&l, &mut s), LoginStep::BadCredential);
+    assert_eq!(s.targets(), vec![TOKEN_URL]);
+}
+
+#[test]
+fn a_form_encoded_token_response_is_accepted() {
+    let l = login();
+    let mut s = Script::happy().answer(
+        TOKEN_URL,
+        200,
+        &format!("access_token={TOKEN}&scope=read%3Aorg&token_type=bearer"),
+    );
+    assert_eq!(identity(run(&l, &mut s)).id, "github:octocat");
+}
+
+#[test]
+fn an_idp_5xx_is_fed_back_and_declined_as_1_5_5_did() {
+    // 1.5.5's core fed EVERY HTTP status back; the module rejected non-2xx.
+    let l = login();
+    let mut s = Script::happy().answer(TOKEN_URL, 503, "unavailable");
+    assert_eq!(run(&l, &mut s), LoginStep::BadCredential);
+}
+
+#[test]
+fn an_unreachable_idp_is_an_outage() {
+    let l = login();
+    let mut s = Script::happy().unreachable(USER_URL);
+    assert_eq!(run(&l, &mut s), LoginStep::Outage);
+}
+
+#[test]
+fn a_malformed_org_list_is_declined_not_a_zero_group_login() {
+    let l = login();
+    let mut s = Script::happy().answer(ORGS_URL, 200, "[{truncated");
+    assert_eq!(run(&l, &mut s), LoginStep::BadCredential);
+}
+
+#[test]
+fn fetch_orgs_false_identifies_after_user_with_two_hops() {
+    let settings = SETTINGS.replace("\"client_id\"", "\"fetch_orgs\": false, \"client_id\"");
+    let l = GithubLogin::open(&settings, Some(SECRET)).unwrap();
+    let mut s = Script::happy();
+    let p = identity(run(&l, &mut s));
+    assert!(p.roles.is_empty());
+    assert_eq!(s.targets(), vec![TOKEN_URL, USER_URL]);
+}
+
+#[test]
+fn a_callback_missing_the_verifier_is_declined_with_no_exchange() {
+    let l = login();
+    let mut s = Script::happy();
+    let mut f = l.start(Some("c"), Some("https://node.example/cb"), None);
+    assert_eq!(l.drive(&mut f, &mut s), LoginStep::BadCredential);
+    assert!(s.issued.is_empty());
+}
+
+/// Slow I/O pends: each hop answers PENDING once, the flow parks on it, and the next drive re-issues
+/// the SAME request (a one-shot exchange serves its stored result) and carries on.
+#[test]
+fn a_pending_exchange_parks_and_resumes_on_the_same_request() {
+    let l = login();
+    let mut s = Script::happy();
+    s.pend_first = true;
+    let mut f = flow(&l);
+    let mut pendings = 0;
+    let step = loop {
+        match l.drive(&mut f, &mut s) {
+            LoginStep::Pending => pendings += 1,
+            done => break done,
+        }
+        assert!(pendings <= 3, "one pend per hop");
+    };
+    assert_eq!(pendings, 3);
+    assert_eq!(identity(step).id, "github:octocat");
+    // Every hop was issued twice, identically: once pending, once answered.
+    assert_eq!(s.issued.len(), 6);
+    for pair in s.issued.chunks(2) {
+        assert_eq!(pair[0], pair[1]);
+    }
+}
+
+/// The answer is kept: a re-call (the host's short-buffer re-issue) is served from it and never
+/// redeems the code again.
+#[test]
+fn a_finished_flow_answers_again_without_new_exchanges() {
+    let l = login();
+    let mut s = Script::happy();
+    let mut f = flow(&l);
+    let first = l.drive(&mut f, &mut s);
+    let issued = s.issued.len();
+    assert_eq!(l.drive(&mut f, &mut s), first);
+    assert_eq!(s.issued.len(), issued);
+}
+
+/// 1.5.5's allowlist is the hosts the OPERATOR wrote: with the bases left at their defaults, 1.5.5
+/// refused the first hop before sending anything ("Couldn't reach your provider"), and so does this.
+#[test]
+fn defaulted_bases_are_not_allow_listed_as_in_1_5_5() {
+    let l = GithubLogin::open(r#"{"client_id":"Iv1.client"}"#, Some(SECRET)).unwrap();
+    let mut s = Script::happy();
+    assert_eq!(run(&l, &mut s), LoginStep::Outage);
+    assert!(s.issued.is_empty(), "the secret never left the plugin");
+}
+
+#[test]
+fn a_plaintext_public_token_base_is_refused_before_the_secret_leaves() {
+    let settings = SETTINGS.replace(
+        "\"token_base\": \"https://github.com\"",
+        "\"token_base\": \"http://github.com\"",
+    );
+    let l = GithubLogin::open(&settings, Some(SECRET)).unwrap();
+    let mut s = Script::happy();
+    assert_eq!(run(&l, &mut s), LoginStep::Outage);
+    assert!(s.issued.is_empty());
+}
+
+#[test]
+fn a_bearer_with_a_line_break_fails_the_hop_closed() {
+    // A token that would split the request: 1.5.5's header sanitiser failed the hop (an outage).
+    let l = login();
+    let mut s = Script::happy().answer(TOKEN_URL, 200, r#"{"access_token":"gho_x\r\nX-Evil: 1"}"#);
+    assert_eq!(run(&l, &mut s), LoginStep::Outage);
+    assert_eq!(s.targets(), vec![TOKEN_URL]);
+}
+
+#[test]
+fn a_hop_body_carrying_an_id_token_is_declined() {
+    let l = login();
+    let mut s = Script::happy().answer(
+        TOKEN_URL,
+        200,
+        r#"{"access_token":"gho_x","id_token":"a.b.c"}"#,
+    );
+    assert_eq!(run(&l, &mut s), LoginStep::BadCredential);
+}
+
+/// The hop loop is bounded as 1.5.5's was: a far end that keeps answering token-shaped bodies never
+/// identifies, and the flow ends after six turns.
+#[test]
+fn the_hop_loop_is_bounded() {
+    let l = login();
+    let tok = r#"{"access_token":"gho_again"}"#;
+    let mut s = Script::happy().answer(USER_URL, 200, tok);
+    assert_eq!(run(&l, &mut s), LoginStep::Outage);
+    assert_eq!(s.issued.len(), MAX_HOPS);
+}
+
+/// The same bodies through the 1.5.5 step machine (the cold module, driven as 1.5.5's core drove it)
+/// and through the flow reach the same answer and describe the same hops.
+#[test]
+fn the_flow_answers_as_the_1_5_5_module_driven_by_the_1_5_5_core() {
+    let cfg: GitHubConfig = serde_json::from_str(SETTINGS).unwrap();
+    let cases: Vec<Script> = vec![
+        Script::happy(),
+        Script::happy().answer(ORGS_URL, 200, r#"[{"login":"elsewhere"}]"#),
+        Script::happy().answer(USER_URL, 401, "{}"),
+        Script::happy().answer(TOKEN_URL, 200, r#"{"error":"bad_verification_code"}"#),
+        Script::happy().answer(ORGS_URL, 200, "[{bad"),
+        Script::happy().answer(USER_URL, 200, r#"{"login":"no-id"}"#),
+    ];
+    for mut script in cases {
+        let answers = script.answers.clone();
+        let flow_step = run(&login(), &mut script);
+
+        // 1.5.5: the core's loop over the module.
+        let module = GithubModule::new(cfg.clone());
+        let mut cl = CompleteLogin {
+            code: Some("the-code".into()),
+            redirect_uri: Some("https://node.example/auth/token".into()),
+            code_verifier: Some("the-verifier".into()),
+            ..Default::default()
+        };
+        let mut urls = Vec::new();
+        let mut legacy = LoginStep::Outage;
+        for _ in 0..MAX_HOPS {
+            match module.complete_login(&cl) {
+                LoginOutcome::Identify(p) => {
+                    legacy = LoginStep::Identity(p);
+                    break;
+                }
+                LoginOutcome::Reject => {
+                    legacy = LoginStep::BadCredential;
+                    break;
+                }
+                LoginOutcome::Exchange(hop) => {
+                    urls.push(hop.url.clone());
+                    let Some(Fetched::Ready(r)) = answers.get(&hop.url) else {
+                        break;
+                    };
+                    cl.token_response = Some(LoginHttpResponse {
+                        status: r.status,
+                        body: String::from_utf8_lossy(&r.body).into_owned(),
+                    });
+                }
+                _ => break,
+            }
+        }
+        assert_eq!(flow_step, legacy);
+        assert_eq!(script.targets(), urls);
+    }
+}
+
+#[test]
+fn open_keeps_the_1_5_5_refusal_texts() {
+    let err = |s: &str, secret: Option<&str>| GithubLogin::open(s, secret).unwrap_err();
+    assert_eq!(
+        err("  ", Some(SECRET)),
+        "github plugin requires config (client_id); none provided"
+    );
+    assert!(err("{ not json", Some(SECRET)).starts_with("invalid github plugin config: "));
+    assert!(err(r#"{"client_id":"x","bogus":1}"#, Some(SECRET))
+        .starts_with("invalid github plugin config: unknown field `bogus`"));
+    // The secret is never a settings key: it comes from browser_login.client_secret.
+    assert!(
+        err(r#"{"client_id":"x","client_secret":"leak"}"#, Some(SECRET))
+            .starts_with("invalid github plugin config: unknown field `client_secret`")
+    );
+    assert_eq!(err(r#"{"client_id":"x"}"#, None), NO_CLIENT_SECRET);
+}
+
+#[test]
+fn nothing_formats_a_secret_the_code_or_the_bearer() {
+    let l = login();
+    let mut s = Script::happy();
+    s.pend_first = true;
+    let mut f = flow(&l);
+    l.drive(&mut f, &mut s); // pending on the token exchange
+    l.drive(&mut f, &mut s); // pending on /user, the bearer held
+    let text = format!("{l:?} {f:?} {:?}", s.issued);
+    for secret in [SECRET, TOKEN, "the-code", "the-verifier"] {
+        assert!(!text.contains(secret), "{secret} leaked into {text}");
+    }
+}
+
+#[test]
+fn begin_login_is_the_1_5_5_authorize_url() {
+    let l = login();
+    let url = l.begin_login(
+        "https://node.example/auth/token",
+        "st",
+        "ch",
+        &["user:email".to_string()],
+    );
+    assert_eq!(
+        url,
+        build_github_authorize_url(
+            l.config(),
+            "https://node.example/auth/token",
+            "st",
+            "ch",
+            &["user:email".to_string()]
+        )
+    );
+    assert!(!url.contains(SECRET));
+}
+
+#[test]
+fn form_encode_is_serde_urlencoded() {
+    let pairs = vec![
+        ("a b".to_string(), "x*y-z._~!".to_string()),
+        ("k".to_string(), "é/=&".to_string()),
+    ];
+    assert_eq!(form_encode(&pairs), "a+b=x*y-z._%7E%21&k=%C3%A9%2F%3D%26");
+    assert_eq!(form_encode(&[]), "");
+}

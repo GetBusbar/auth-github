@@ -34,6 +34,18 @@
 //! computes those headers; [`build_userinfo_get`] and [`build_orgs_get`] attach them directly to the
 //! `/user` and `/user/orgs` hops. The CORE sanitizes and attaches them (CR/LF/NUL + hop-control
 //! headers rejected; host must be operator-allowlisted) before executing the hop.
+//!
+//! ## 1.6.0: the plugin runs its own hops
+//!
+//! On busbar 1.6.0 the plugin holds its own client secret and runs the hop chain itself over its own
+//! need ([`login`]: the same step machine, driven over a one-shot pending exchange; [`guard`]: the
+//! hop guard 1.5.5's core applied). [`GithubModule`] is the 1.5.5 shape the current cold door still
+//! exports; it goes when the auth kind's login kit lands and the door moves to the memory ABI.
+
+#![forbid(unsafe_code)]
+
+pub mod guard;
+pub mod login;
 
 use busbar_contract::auth::{
     AuthModule, AuthVerdict, BeginLogin, CompleteLogin, LoginHop, LoginHttpResponse, LoginModule,
@@ -657,7 +669,7 @@ impl GithubModule {
 }
 
 /// Whether a body's first non-whitespace char is `[` (a JSON array — the `/user/orgs` shape).
-fn is_json_array(body: &str) -> bool {
+pub(crate) fn is_json_array(body: &str) -> bool {
     body.trim_start().starts_with('[')
 }
 
