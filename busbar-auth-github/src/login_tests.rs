@@ -564,7 +564,11 @@ fn the_v1_5_5_example_provider_loads_and_logs_in_with_the_secret_beside_the_sett
             r#"[{"login":"testorg"}]"#,
         );
     let p = identity(run(&l, &mut s));
-    assert_eq!(p.roles, vec!["github:org/testorg".to_string()]);
+    // The principal, byte for byte (owner Q109 signed: the stable numeric id role leads).
+    let mut expected = Principal::from_id("github:octocat");
+    expected.name = Some("octocat".to_string());
+    expected.roles = vec!["github:id/1".to_string(), "github:org/testorg".to_string()];
+    assert_eq!(p, expected);
     let body = String::from_utf8(s.issued[0].body.clone()).unwrap();
     assert!(body.starts_with("client_id=Iv1.e2eclient&"), "{body}");
     assert!(
@@ -641,12 +645,11 @@ fn form_encode_is_serde_urlencoded() {
     assert_eq!(form_encode(&[]), "");
 }
 
-/// OWNER DECISION (1.6.0-QUESTIONS, "a GitHub base URL written as a secret reference now logs
+/// OWNER Q123 ACCEPTED (2026-09-30: "a GitHub base URL written as a secret reference now logs
 /// in"): v1.5.5 built the hop allowlist from the RAW settings (auth/token.rs:283), so
 /// `api_base: {env: GHE_API}` contributed no host and every hop was refused (502). On 1.6.0 the
 /// kernel resolves the reference in place and the plugin sees only the resolved string, so the
-/// same provider logs in. This cell PINS the 1.6.0 behaviour (recommendation: accept); if the owner
-/// rejects, it flips to expect `Outage` once the kernel names the reference-sourced keys.
+/// same provider logs in. The owner accepted that; this cell pins it.
 #[test]
 fn decision_a_reference_written_base_resolved_by_the_kernel_logs_in() {
     // As the kernel delivers `settings: { api_base: {env: GHE_API}, token_base: {env: GHE_WEB},

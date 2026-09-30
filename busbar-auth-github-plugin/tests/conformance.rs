@@ -213,7 +213,11 @@ fn the_linked_and_the_dropped_in_github_module_are_one_module() {
         "{text}"
     );
     assert!(text.contains("id: \"github:octocat\""), "{text}");
-    assert!(text.contains("\"github:org/acme\""), "{text}");
+    // Owner Q109 signed: the stable numeric id role leads, then the org groups.
+    assert!(
+        text.contains("roles: [\"github:id/1\", \"github:org/acme\"]"),
+        "{text}"
+    );
     assert_eq!(linked.last().map(String::as_str), Some("Reject"));
 
     // RED ARM 1: the same cdylib under a different operator config is a different transcript.
