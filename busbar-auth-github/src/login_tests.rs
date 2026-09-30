@@ -12,6 +12,7 @@ use std::collections::HashMap;
 
 const SECRET: &str = "s3cr3t-client-value";
 const TOKEN: &str = "gho_live_bearer";
+const NONCE: &str = "kernel-minted-nonce";
 
 /// The operator writes every base out (as a 1.5.5 GitHub method had to, for its hops to pass).
 const SETTINGS: &str = r#"{
@@ -92,6 +93,7 @@ fn flow(l: &GithubLogin) -> LoginFlow {
         Some("the-code"),
         Some("https://node.example/auth/token"),
         Some("the-verifier"),
+        Some(NONCE),
     )
 }
 
@@ -276,7 +278,12 @@ fn fetch_orgs_false_identifies_after_user_with_two_hops() {
 fn a_callback_missing_the_verifier_is_declined_with_no_exchange() {
     let l = login();
     let mut s = Script::happy();
-    let mut f = l.start(Some("c"), Some("https://node.example/cb"), None);
+    let mut f = l.start(
+        Some("c"),
+        Some("https://node.example/cb"),
+        None,
+        Some(NONCE),
+    );
     assert_eq!(l.drive(&mut f, &mut s), LoginStep::BadCredential);
     assert!(s.issued.is_empty());
 }
@@ -350,15 +357,78 @@ fn a_bearer_with_a_line_break_fails_the_hop_closed() {
     assert_eq!(s.targets(), vec![TOKEN_URL]);
 }
 
+/// An unsigned JWT-shaped token whose payload is `claims` (base64url, no padding).
+fn id_token(claims: &str) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let b = claims.as_bytes();
+    let mut out = String::new();
+    for chunk in b.chunks(3) {
+        let n = chunk.iter().fold(0u32, |a, &x| (a << 8) | x as u32) << (8 * (3 - chunk.len()));
+        for i in 0..=chunk.len() {
+            out.push(A[((n >> (18 - 6 * i)) & 63) as usize] as char);
+        }
+    }
+    format!("eyJhbGciOiJub25lIn0.{out}.sig")
+}
+
+/// 1.5.5's core nonce binding, now the plugin's (WIRE-AUTH: `CompleteLoginIn.nonce`): an id_token
+/// whose nonce is not the one minted at begin is refused before any identity is trusted.
 #[test]
-fn a_hop_body_carrying_an_id_token_is_declined() {
+fn an_id_token_with_a_foreign_nonce_is_refused() {
     let l = login();
-    let mut s = Script::happy().answer(
-        TOKEN_URL,
-        200,
-        r#"{"access_token":"gho_x","id_token":"a.b.c"}"#,
+    for body in [
+        format!(
+            r#"{{"access_token":"gho_x","id_token":"{}"}}"#,
+            id_token(r#"{"nonce":"someone-else"}"#)
+        ),
+        format!(
+            r#"{{"access_token":"gho_x","id_token":"{}"}}"#,
+            id_token(r#"{"sub":"no-nonce"}"#)
+        ),
+        r#"{"access_token":"gho_x","id_token":"a.!!!.c"}"#.to_string(),
+        r#"{"access_token":"gho_x","id_token":"no-dots"}"#.to_string(),
+    ] {
+        let mut s = Script::happy().answer(TOKEN_URL, 200, &body);
+        assert_eq!(run(&l, &mut s), LoginStep::BadCredential, "{body}");
+        assert_eq!(s.targets(), vec![TOKEN_URL]);
+    }
+    // No nonce minted: any id_token is refused (1.5.5 always minted one).
+    let body = format!(
+        r#"{{"access_token":"gho_x","id_token":"{}"}}"#,
+        id_token(&format!(r#"{{"nonce":"{NONCE}"}}"#))
     );
-    assert_eq!(run(&l, &mut s), LoginStep::BadCredential);
+    let mut s = Script::happy().answer(TOKEN_URL, 200, &body);
+    let mut f = l.start(Some("c"), Some("https://node.example/cb"), Some("v"), None);
+    assert_eq!(l.drive(&mut f, &mut s), LoginStep::BadCredential);
+}
+
+#[test]
+fn an_id_token_bound_to_the_minted_nonce_passes_the_check() {
+    let l = login();
+    for claims in [
+        format!(r#"{{"nonce":"{NONCE}"}}"#),
+        format!(r#"{{"nonce":"{NONCE}","sub":"x1"}}"#),
+        format!(r#"{{"nonce":"{NONCE}","s":"xy"}}"#),
+    ] {
+        let body = format!(
+            r#"{{"access_token":"{TOKEN}","id_token":"{}"}}"#,
+            id_token(&claims)
+        );
+        let mut s = Script::happy().answer(TOKEN_URL, 200, &body);
+        assert_eq!(identity(run(&l, &mut s)).id, "github:octocat", "{claims}");
+    }
+}
+
+#[test]
+fn b64url_decode_is_strict_url_safe_no_pad() {
+    assert_eq!(b64url_decode("").as_deref(), Some(&b""[..]));
+    assert_eq!(b64url_decode("Zg").as_deref(), Some(&b"f"[..]));
+    assert_eq!(b64url_decode("Zm8").as_deref(), Some(&b"fo"[..]));
+    assert_eq!(b64url_decode("Zm9v").as_deref(), Some(&b"foo"[..]));
+    assert_eq!(b64url_decode("-_8").as_deref(), Some(&[0xfb, 0xff][..]));
+    for bad in ["Zg==", "Z", "Zh", "Zm9", "+/8", "Zm9v!"] {
+        assert_eq!(b64url_decode(bad), None, "{bad}");
+    }
 }
 
 /// The hop loop is bounded as 1.5.5's was: a far end that keeps answering token-shaped bodies never

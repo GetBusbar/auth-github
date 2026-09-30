@@ -137,6 +137,8 @@ pub struct LoginFlow {
     turns: usize,
     inflight: Option<HopRequest>,
     done: Option<LoginStep>,
+    /// The nonce the kernel minted at begin (`CompleteLoginIn.nonce`), bound to any `id_token`.
+    nonce: Option<Redacted<String>>,
 }
 
 impl fmt::Debug for LoginFlow {
@@ -207,13 +209,15 @@ impl GithubLogin {
         build_github_authorize_url(&self.cfg, redirect_uri, state, code_challenge, scopes)
     }
 
-    /// A new flow for one callback (what 1.5.5's core put in the first `CompleteLogin`).
+    /// A new flow for one callback (what 1.5.5's core put in the first `CompleteLogin`), with the
+    /// nonce the kernel minted at begin (1.5.5 kept it in the login cookie).
     #[must_use]
     pub fn start(
         &self,
         code: Option<&str>,
         redirect_uri: Option<&str>,
         code_verifier: Option<&str>,
+        nonce: Option<&str>,
     ) -> LoginFlow {
         LoginFlow {
             req: CompleteLogin {
@@ -226,6 +230,7 @@ impl GithubLogin {
             turns: 0,
             inflight: None,
             done: None,
+            nonce: nonce.map(|n| Redacted::new(n.to_string())),
         }
     }
 
@@ -261,9 +266,13 @@ impl GithubLogin {
                 Fetched::Unreachable => return finish(flow, LoginStep::Outage),
                 Fetched::Ready(resp) => {
                     let body = String::from_utf8_lossy(&resp.body).into_owned();
-                    // 1.5.5's core refused any hop body carrying an `id_token` whose nonce was not
-                    // the one it minted; a GitHub authorize URL carries no nonce, so none can match.
-                    if carries_id_token(&body) {
+                    // 1.5.5's core NONCE BINDING, now the plugin's: a hop body carrying an
+                    // `id_token` must carry the nonce minted at begin, before any identity is
+                    // trusted. GitHub issues no id_token, so this never fires against github.com.
+                    if !id_token_nonce_binds(
+                        &body,
+                        flow.nonce.as_ref().map(|n| n.expose_secret().as_str()),
+                    ) {
                         return finish(flow, LoginStep::BadCredential);
                     }
                     flow.req.token_response = Some(LoginHttpResponse {
@@ -392,12 +401,74 @@ fn finish(flow: &mut LoginFlow, step: LoginStep) -> LoginStep {
     step
 }
 
-/// Whether a hop body carries an `id_token` (1.5.5 `extract_id_token`).
-fn carries_id_token(body: &str) -> bool {
-    serde_json::from_str::<Value>(body)
-        .ok()
-        .and_then(|v| v.get("id_token").and_then(Value::as_str).map(|_| ()))
-        .is_some()
+/// 1.5.5's nonce binding (`extract_id_token` + `id_token_nonce` + a constant-time compare): a body
+/// with no `id_token` binds trivially; one with an `id_token` binds only when its payload's `nonce`
+/// claim (base64url, no signature check: that is the IdP module's job) equals `minted`.
+fn id_token_nonce_binds(body: &str, minted: Option<&str>) -> bool {
+    let Some(id_token) = serde_json::from_str::<Value>(body).ok().and_then(|v| {
+        v.get("id_token")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    }) else {
+        return true;
+    };
+    let claimed = id_token
+        .split('.')
+        .nth(1)
+        .and_then(b64url_decode)
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|claims| {
+            claims
+                .get("nonce")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        });
+    match (claimed, minted) {
+        (Some(n), Some(m)) => busbar_contract::constant_time_eq(&n, m),
+        _ => false,
+    }
+}
+
+/// base64url without padding, strict as 1.5.5's `URL_SAFE_NO_PAD` decoder: no `=`, no length of
+/// `4k+1`, and the unused trailing bits must be zero.
+fn b64url_decode(s: &str) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'-' => 62,
+            b'_' => 63,
+            _ => return None,
+        } as u32)
+    }
+    let bytes = s.as_bytes();
+    if bytes.len() % 4 == 1 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    for chunk in bytes.chunks(4) {
+        let mut acc = 0u32;
+        for &c in chunk {
+            acc = (acc << 6) | val(c)?;
+        }
+        match chunk.len() {
+            4 => out.extend_from_slice(&[(acc >> 16) as u8, (acc >> 8) as u8, acc as u8]),
+            3 => {
+                if acc & 0b11 != 0 {
+                    return None;
+                }
+                out.extend_from_slice(&[(acc >> 10) as u8, (acc >> 2) as u8]);
+            }
+            _ => {
+                if acc & 0b1111 != 0 {
+                    return None;
+                }
+                out.push((acc >> 4) as u8);
+            }
+        }
+    }
+    Some(out)
 }
 
 /// `application/x-www-form-urlencoded`, as 1.5.5's http stack encoded a form (`serde_urlencoded`):
