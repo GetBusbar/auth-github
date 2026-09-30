@@ -279,8 +279,7 @@ pub struct GhUser {
     /// The GitHub username (`login`) — the handle used in the `github:<login>` identity of record.
     pub login: String,
     /// The IMMUTABLE numeric account id. A `login` can be renamed, released and re-registered by
-    /// someone else; this cannot. Surfaced as the `github:id/<id>` role so operators have something
-    /// stable to bind to — see [`build_principal`].
+    /// someone else; this cannot. Required (a genuine `/user` body always carries it).
     pub id: i64,
     /// Optional display name.
     pub name: Option<String>,
@@ -392,40 +391,15 @@ pub fn parse_org_groups(body: &str) -> Option<Vec<String>> {
 }
 
 /// Assemble the identity [`Principal`] from the parsed `/user` and org groups: id `github:<login>`,
-/// display name (the profile `name`, falling back to the `login`), and the `github:org/<org>` groups.
+/// display name (the profile `name`, falling back to the `login`), and the `github:org/<org>` groups
+/// as its roles, exactly as the published 1.5.5 plugin (v1.0.3) answers.
 ///
-/// The principal id stays `github:<login>`: it is the documented, human-readable identity operators
-/// already bind roles to in `auth.role_bindings.github:`, and changing it would silently break every
-/// existing binding and every persisted `user:github:<login>` group at once.
-///
-/// But a login is NOT a safe thing to anchor identity on, and saying "renaming is rare, just re-bind"
-/// understates it. GitHub RELEASES a handle when an account is renamed or deleted, and anyone may then
-/// register it. A departed employee's handle, taken by an outsider, produces the identical principal
-/// id and inherits that person's role bindings, per-user group, pools and budgets — with nothing
-/// anywhere reporting a change of person.
-///
-/// So the stable numeric account id is emitted ALONGSIDE, as the `github:id/<id>` role. That is
-/// purely additive: every existing login binding keeps working untouched, and an operator can bind to
-/// `github:id/12345` and migrate at their own pace. New deployments should prefer it.
-///
-/// WHAT THIS DOES AND DOES NOT FIX, because the difference is easy to overread. It narrows WHO GETS
-/// GRANTED: a binding on `github:id/<id>` cannot be inherited by whoever re-registers the handle,
-/// because core matches roles by exact lookup and the impostor carries a different numeric role. It
-/// does NOT separate the BUCKETS: the enforcement subject is still `principal.id`, so the
-/// re-registered handle continues to land on the same `user:github:<login>` group, usage ledger and
-/// budget as its previous owner. Separating those means changing the principal id, which is the
-/// breaking change this deliberately avoids.
-///
-/// `github:org/<org>` has the same weakness, being likewise a renameable slug. Closing that one needs
-/// the org's numeric id threaded through `parse_org_groups`, a payload change rather than a one-line
-/// addition.
+/// The numeric account id is parsed ([`parse_user`] requires it as the shape check of a genuine
+/// `/user` body) but is not surfaced: 1.5.5 emits no role for it.
 pub fn build_principal(user: &GhUser, org_groups: Vec<String>) -> Principal {
     let mut p = Principal::from_id(format!("github:{}", user.login));
     p.name = Some(user.name.clone().unwrap_or_else(|| user.login.clone()));
-    // FIRST, so it is the one an operator reading a principal sees before the org list.
-    p.roles = Vec::with_capacity(org_groups.len() + 1);
-    p.roles.push(format!("github:id/{}", user.id));
-    p.roles.extend(org_groups);
+    p.roles = org_groups;
     p
 }
 
