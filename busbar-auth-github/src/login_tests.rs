@@ -630,3 +630,39 @@ fn form_encode_is_serde_urlencoded() {
     assert_eq!(form_encode(&pairs), "a+b=x*y-z._%7E%21&k=%C3%A9%2F%3D%26");
     assert_eq!(form_encode(&[]), "");
 }
+
+/// OWNER DECISION (1.6.0-QUESTIONS, "a GitHub base URL written as a secret reference now logs
+/// in"): v1.5.5 built the hop allowlist from the RAW settings (auth/token.rs:283), so
+/// `api_base: {env: GHE_API}` contributed no host and every hop was refused (502). On 1.6.0 the
+/// kernel resolves the reference in place and the plugin sees only the resolved string, so the
+/// same provider logs in. This cell PINS the 1.6.0 behaviour (recommendation: accept); if the owner
+/// rejects, it flips to expect `Outage` once the kernel names the reference-sourced keys.
+#[test]
+fn decision_a_reference_written_base_resolved_by_the_kernel_logs_in() {
+    // As the kernel delivers `settings: { api_base: {env: GHE_API}, token_base: {env: GHE_WEB},
+    // authorize_base: {env: GHE_WEB}, client_id: "Iv1.client" }` after resolving in place.
+    let delivered = r#"{
+        "client_id": "Iv1.client",
+        "api_base": "https://ghe.corp.example/api/v3",
+        "token_base": "https://ghe.corp.example",
+        "authorize_base": "https://ghe.corp.example"
+    }"#;
+    let l = GithubLogin::open(delivered, Some(SECRET)).unwrap();
+    let mut s = Script::new()
+        .answer(
+            "https://ghe.corp.example/login/oauth/access_token",
+            200,
+            &format!(r#"{{"access_token":"{TOKEN}"}}"#),
+        )
+        .answer(
+            "https://ghe.corp.example/api/v3/user",
+            200,
+            r#"{"login":"octocat","id":1}"#,
+        )
+        .answer(
+            "https://ghe.corp.example/api/v3/user/orgs?per_page=100",
+            200,
+            "[]",
+        );
+    assert_eq!(identity(run(&l, &mut s)).id, "github:octocat");
+}
