@@ -119,6 +119,7 @@ fn a_member_signs_in_with_org_groups() {
     assert_eq!(
         p.roles,
         vec![
+            "github:id/1".to_string(),
             "github:org/acme".to_string(),
             "github:org/widgets".to_string()
         ]
@@ -196,11 +197,20 @@ fn red_a_non_member_carries_no_group_for_the_org() {
         "{:?}",
         p.roles
     );
-    assert_eq!(p.roles, vec!["github:org/elsewhere".to_string()]);
+    assert_eq!(
+        p.roles,
+        vec![
+            "github:id/1".to_string(),
+            "github:org/elsewhere".to_string()
+        ]
+    );
 
     // A member of nothing: identified, zero groups (a VALID empty list).
     let mut s = Script::happy().answer(ORGS_URL, 200, "[]");
-    assert!(identity(run(&l, &mut s)).roles.is_empty());
+    assert_eq!(
+        identity(run(&l, &mut s)).roles,
+        vec!["github:id/1".to_string()]
+    );
 }
 
 /// RED ARM (revoked token): GitHub answers `/user` 401 for a revoked or expired bearer. 1.5.5 fed
@@ -270,7 +280,7 @@ fn fetch_orgs_false_identifies_after_user_with_two_hops() {
     let l = GithubLogin::open(&settings, Some(SECRET)).unwrap();
     let mut s = Script::happy();
     let p = identity(run(&l, &mut s));
-    assert!(p.roles.is_empty());
+    assert_eq!(p.roles, vec!["github:id/1".to_string()]);
     assert_eq!(s.targets(), vec![TOKEN_URL, USER_URL]);
 }
 
