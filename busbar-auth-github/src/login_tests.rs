@@ -389,7 +389,7 @@ fn an_id_token_with_a_foreign_nonce_is_refused() {
         r#"{"access_token":"gho_x","id_token":"no-dots"}"#.to_string(),
     ] {
         let mut s = Script::happy().answer(TOKEN_URL, 200, &body);
-        assert_eq!(run(&l, &mut s), LoginStep::BadCredential, "{body}");
+        assert_eq!(run(&l, &mut s), LoginStep::SecurityCheckFailed, "{body}");
         assert_eq!(s.targets(), vec![TOKEN_URL]);
     }
     // No nonce minted: any id_token is refused (1.5.5 always minted one).
@@ -399,7 +399,7 @@ fn an_id_token_with_a_foreign_nonce_is_refused() {
     );
     let mut s = Script::happy().answer(TOKEN_URL, 200, &body);
     let mut f = l.start(Some("c"), Some("https://node.example/cb"), Some("v"), None);
-    assert_eq!(l.drive(&mut f, &mut s), LoginStep::BadCredential);
+    assert_eq!(l.drive(&mut f, &mut s), LoginStep::SecurityCheckFailed);
 }
 
 #[test]

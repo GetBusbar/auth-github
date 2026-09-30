@@ -20,6 +20,7 @@
 //! | module `Reject` ("Sign-in was declined", 401) | [`LoginStep::BadCredential`] |
 //! | hop refused or unreachable ("Couldn't reach your provider", 502) | [`LoginStep::Outage`] |
 //! | hop limit spent / `Authorize` on the callback (502) | [`LoginStep::Outage`] |
+//! | a hop body's `id_token` nonce mismatch ("Sign-in couldn't be verified", 400) | [`LoginStep::SecurityCheckFailed`] |
 //!
 //! Any HTTP status the IdP answers is fed back to the step machine, as 1.5.5 did: a revoked token's
 //! `401` from `/user` is a declined sign-in, not an outage.
@@ -119,6 +120,9 @@ pub enum LoginStep {
     BadCredential,
     /// The IdP could not be reached, or the login could not finish.
     Outage,
+    /// A hop body's `id_token` is not bound to the nonce minted at begin (1.5.5's 400
+    /// "Sign-in couldn't be verified"; the auth ABI's `LOGIN_SECURITY_CHECK_FAILED`).
+    SecurityCheckFailed,
 }
 
 /// The state 1.5.5 kept per flow between hops (its `PendingLogin`), owned by the flow.
@@ -273,7 +277,7 @@ impl GithubLogin {
                         &body,
                         flow.nonce.as_ref().map(|n| n.expose_secret().as_str()),
                     ) {
-                        return finish(flow, LoginStep::BadCredential);
+                        return finish(flow, LoginStep::SecurityCheckFailed);
                     }
                     flow.req.token_response = Some(LoginHttpResponse {
                         status: resp.status,
