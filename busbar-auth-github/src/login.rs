@@ -46,12 +46,6 @@ pub const HOP_TIMEOUT_MS: u64 = 10_000;
 /// 1.5.5's bound on `complete_login` turns per callback (`MAX_HOPS = 6`).
 pub const MAX_HOPS: usize = 6;
 
-/// The refusal `open` answers when no client secret was resolved: 1.5.5's boot text for a redirect
-/// method without `browser_login.client_secret` (the kernel prefixes the entry, as 1.5.5 prefixed
-/// `identity-providers.<name> browser_login: `).
-pub const NO_CLIENT_SECRET: &str = "a redirect (OAuth) login method requires \
-     browser_login.client_secret (it is a confidential client)";
-
 /// One hop, rendered as 1.5.5's core put it on the wire: method, target, header fields in order
 /// (lowercase names), the form-encoded body, the timeout.
 #[derive(Clone, PartialEq, Eq)]
@@ -173,24 +167,31 @@ impl fmt::Debug for GithubLogin {
 
 impl GithubLogin {
     /// Build the login from its settings (the module config 1.5.5's `open` took, same keys, same
-    /// refusal texts) and the client secret the kernel resolved from `browser_login.client_secret`.
+    /// refusal texts) and the client secret the kernel resolved from `browser_login.client_secret`
+    /// (busbar v1.5.5 `config/mod.rs:627-646`, resolved core-side at `auth/token.rs:264-276`), which
+    /// arrives in `OpenIn.secrets`, never in `settings`: a `client_secret` key in the settings is
+    /// refused (`deny_unknown_fields`), exactly as 1.5.5's plugin refused it.
+    ///
+    /// No secret (`None` or empty) is NOT a refusal: 1.5.5 opened the plugin for a headless-only
+    /// provider with no `browser_login` block, and a hop's `client_secret` field was then dropped
+    /// (`auth/token.rs:944`). A redirect method missing its secret is refused by the kernel, as 1.5.5
+    /// refused it (`validate_browser_login_secret`, `auth/token.rs:264`, `:813`).
     ///
     /// # Errors
-    /// Empty or invalid settings (1.5.5's texts), or no client secret ([`NO_CLIENT_SECRET`]).
+    /// Empty or invalid settings (1.5.5's texts).
     pub fn open(settings: &str, client_secret: Option<&str>) -> Result<Self, String> {
         if settings.trim().is_empty() {
             return Err("github plugin requires config (client_id); none provided".to_string());
         }
         let cfg: GitHubConfig = serde_json::from_str(settings)
             .map_err(|e| format!("invalid github plugin config: {e}"))?;
-        let Some(secret) = client_secret else {
-            return Err(NO_CLIENT_SECRET.to_string());
-        };
         let raw: Value = serde_json::from_str(settings)
             .map_err(|e| format!("invalid github plugin config: {e}"))?;
         Ok(Self {
             cfg,
-            client_secret: Some(Redacted::new(secret.to_string())),
+            client_secret: client_secret
+                .filter(|s| !s.is_empty())
+                .map(|s| Redacted::new(s.to_string())),
             allowed_hosts: collect_allowed_hosts(&raw),
         })
     }

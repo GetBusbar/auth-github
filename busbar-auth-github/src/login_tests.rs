@@ -512,7 +512,77 @@ fn open_keeps_the_1_5_5_refusal_texts() {
         err(r#"{"client_id":"x","client_secret":"leak"}"#, Some(SECRET))
             .starts_with("invalid github plugin config: unknown field `client_secret`")
     );
-    assert_eq!(err(r#"{"client_id":"x"}"#, None), NO_CLIENT_SECRET);
+}
+
+/// The exact v1.5.5 GitHub provider (busbar-auth-github v1.0.3 `tests/e2e.rs:301-306`):
+///
+/// ```yaml
+/// identity-providers:
+///   github:
+///     module: github
+///     settings: { token_base: <ghe>, api_base: <ghe>, authorize_base: <ghe> }
+///     browser_login: { client_id: "Iv1.e2eclient", client_secret: { env: BUSBAR_GH_CLIENT_SECRET } }
+/// ```
+///
+/// reaches the plugin as 1.5.5's core composed it: the settings, plus `browser_login.client_id`
+/// merged in (v1.5.5 `auth/token.rs:218-229`), the secret NOT among them (the kernel resolves it
+/// and the loader moves it into `OpenIn.secrets`). It loads, and the secret it logs in with is the
+/// one handed in beside the settings.
+#[test]
+fn the_v1_5_5_example_provider_loads_and_logs_in_with_the_secret_beside_the_settings() {
+    let delivered = r#"{
+        "token_base": "https://ghe.example",
+        "api_base": "https://ghe.example",
+        "authorize_base": "https://ghe.example",
+        "client_id": "Iv1.e2eclient"
+    }"#;
+    let l = GithubLogin::open(delivered, Some(SECRET)).expect("the 1.5.5 provider loads");
+    let mut s = Script::new()
+        .answer(
+            "https://ghe.example/login/oauth/access_token",
+            200,
+            &format!(r#"{{"access_token":"{TOKEN}"}}"#),
+        )
+        .answer(
+            "https://ghe.example/user",
+            200,
+            r#"{"login":"octocat","id":1}"#,
+        )
+        .answer(
+            "https://ghe.example/user/orgs?per_page=100",
+            200,
+            r#"[{"login":"testorg"}]"#,
+        );
+    let p = identity(run(&l, &mut s));
+    assert_eq!(p.roles, vec!["github:org/testorg".to_string()]);
+    let body = String::from_utf8(s.issued[0].body.clone()).unwrap();
+    assert!(body.starts_with("client_id=Iv1.e2eclient&"), "{body}");
+    assert!(
+        body.ends_with(&format!("&client_secret={SECRET}")),
+        "{body}"
+    );
+
+    // RED: a secret left in the settings (not moved into OpenIn.secrets) is refused, as 1.5.5's
+    // plugin refused a `client_secret` key in its config; the plugin never takes one from there.
+    let leaked = delivered.replace("\"client_id\"", "\"client_secret\": \"s\", \"client_id\"");
+    assert!(GithubLogin::open(&leaked, Some(SECRET))
+        .unwrap_err()
+        .starts_with("invalid github plugin config: unknown field `client_secret`"));
+}
+
+/// A headless-only provider (no `browser_login`, so no secret) loaded in 1.5.5 and still does; a
+/// hop then carries no `client_secret` field at all (1.5.5 dropped the placeholder), and an empty
+/// secret (the loader's answer for a missing one) is the same as none.
+#[test]
+fn no_secret_loads_and_drops_the_secret_field_as_1_5_5_did() {
+    for secret in [None, Some("")] {
+        let l = GithubLogin::open(SETTINGS, secret).expect("loads without a secret");
+        let mut s = Script::happy();
+        assert_eq!(identity(run(&l, &mut s)).id, "github:octocat");
+        let body = String::from_utf8(s.issued[0].body.clone()).unwrap();
+        assert!(!body.contains("client_secret"), "{body}");
+        assert!(body.ends_with("&code_verifier=the-verifier"), "{body}");
+    }
 }
 
 #[test]
