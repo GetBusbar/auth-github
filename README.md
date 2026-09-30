@@ -10,8 +10,9 @@ The GitHub-OAuth login module as a droppable busbar plugin: a cdylib exporting t
 [![ci](https://github.com/GetBusbar/busbar-auth-github/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/GetBusbar/busbar-auth-github/actions/workflows/ci.yml)
 <!-- fleet:header:end -->
 
+## What it is for
+
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# busbar-auth-github
 
 <a href="https://codecov.io/gh/GetBusbar/busbar-auth-github"><img src="https://codecov.io/gh/GetBusbar/busbar-auth-github/branch/dev/graph/badge.svg" alt="Coverage"></a>
 
@@ -22,7 +23,7 @@ through the operator's `auth.role_bindings.github:` bindings.
 
 It is a **separate plugin from `busbar-auth-oidc`**, and independent of the busbar core release.
 
-## Why GitHub is its own plugin (not an OIDC config)
+### Why GitHub is its own plugin (not an OIDC config)
 
 GitHub OAuth issues an **opaque** access token and **no `id_token` JWT**, so the OIDC/JWKS
 verify path does not apply — there is nothing to verify offline. Identity instead comes from
@@ -32,7 +33,7 @@ executes it and feeds the response back into `complete_login`, bounded to a few 
 confidential-client **secret is the core's alone** — it is injected only into the token-exchange
 hop; the plugin writes the form KEY (`client_secret`), never the VALUE.
 
-## The login flow (hop sequence)
+### The login flow (hop sequence)
 
 | step | `complete_login` input | plugin returns |
 |------|------------------------|----------------|
@@ -46,7 +47,7 @@ Fail-closed (`Reject`) on any non-2xx, missing `access_token`, missing `login`, 
 GitHub answers its token endpoint with **HTTP 200 even on a bad code** (an `{"error":...}` body with
 no `access_token`) — that is treated as a rejection, never a success with an empty token.
 
-## Configuration
+## Config
 
 Only `client_id` is required. The `client_secret` is **never** in this config — the core holds it
 (`browser_login.client_secret`) and injects it into the token-exchange hop.
@@ -90,7 +91,7 @@ and the REST API at `https://<host>/api/v3`:
 }
 ```
 
-## Groups
+### Groups
 
 Each org the user belongs to becomes a group string `github:org/<org-login>`, mapped to policy by the
 operator's `auth.role_bindings.github:`. (Team-level groups `github:team/<org>/<team-slug>` are a
@@ -109,7 +110,7 @@ is the thin `cdylib` that exports the auth C ABI via `busbar_contract::export_lo
 LOGIN export macro — not `export_auth_plugin!`, which would mask browser-login behind the verify-only
 adapter).
 
-## ABI notes / caveats
+### ABI notes / caveats
 
 - **PKCE.** GitHub supports S256 PKCE on the web authorization-code flow (2024+). The core-minted
   `code_challenge` is always sent; a GitHub OAuth App that has not opted into PKCE simply ignores it,
@@ -128,3 +129,13 @@ adapter).
   threads this per-flow state keyed by the core-held PKCE `code_verifier` (falling back to `code` /
   `redirect_uri`). If the core echoes none of those on the feedback calls, concurrent logins would
   share a single slot — the one correctness caveat of the org-hop chain on the current ABI.
+
+## Tests
+
+```bash
+cargo test --workspace --locked
+```
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
