@@ -25,9 +25,9 @@
 //! Any HTTP status the IdP answers is fed back to the step machine, as 1.5.5 did: a revoked token's
 //! `401` from `/user` is a declined sign-in, not an outage.
 //!
-//! THE AUTH ABI ADAPTER (the WIRE-AUTH login kit, ARCHITECT ruling R3) is not in this crate yet; it
-//! calls [`GithubLogin::open`], [`GithubLogin::begin_login`], [`GithubLogin::start`] and
-//! [`GithubLogin::drive`], keeping one [`LoginFlow`] per ticket.
+//! THE AUTH ABI ADAPTER is [`crate::door`]: it calls [`GithubLogin::open`],
+//! [`GithubLogin::begin_login`], [`GithubLogin::start`] and [`GithubLogin::drive`], keeping one
+//! [`LoginFlow`] per ticket and each [`Exchange`] one framed `exchange()` over the plugin's need.
 
 use crate::guard::{collect_allowed_hosts, sanitize_hop_header, vet_hop_url, Refused};
 use crate::{
