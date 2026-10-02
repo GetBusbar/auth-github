@@ -15,7 +15,7 @@
 //! a ticket-less `complete_login` (REFUSED: the token exchange waits on I/O, so it runs on a
 //! ticket), `refresh` accepted and refused, `tick` and `close`. The two transcripts must be equal.
 //!
-//! THE RED ARMS, same file: the dropped-in door opened over ANOTHER config answers a different
+//! THE RED ARMS, each its own test: the dropped-in door opened over ANOTHER config answers a different
 //! transcript (so the equality is not vacuous); the door asked for as another kind is refused,
 //! linked and dropped in. A missing cdylib PANICS: this test IS the dropped-in door's proof, and
 //! never skips.
@@ -443,8 +443,8 @@ fn transcript(p: &Plugin<Auth>, cfg: &str) -> Vec<String> {
     t
 }
 
-/// The GitHub login plugin answers as ONE plugin through either door, and the RED arms show the
-/// comparison is not vacuous.
+/// The GitHub login plugin answers as ONE plugin through either door (the RED arms below show the
+/// comparison is not vacuous).
 #[test]
 fn the_linked_and_the_dropped_in_github_login_are_one_plugin() {
     let d = dispatcher();
@@ -483,8 +483,14 @@ fn the_linked_and_the_dropped_in_github_login_are_one_plugin() {
     ] {
         assert!(text.contains(line), "missing {line:?} in:\n{text}");
     }
+}
 
-    // RED ARM 1: the dropped-in door under a different operator config is a different transcript.
+/// RED ARM 1: the dropped-in door under a different operator config is a different transcript, so
+/// the equality in the both-ways test is not vacuous.
+#[test]
+fn a_different_operator_config_is_a_different_transcript() {
+    let d = dispatcher();
+    let linked = transcript(&linked(&d), CFG);
     let other = transcript(
         &dropped(&d),
         r#"{"client_id":"Iv1.someone-else","fetch_orgs":false}"#,
@@ -493,8 +499,12 @@ fn the_linked_and_the_dropped_in_github_login_are_one_plugin() {
         other, linked,
         "a different config must not read as the same plugin"
     );
+}
 
-    // RED ARM 2: the door asked for as another kind is refused, linked and dropped in.
+/// RED ARM 2: the door asked for as another kind is refused, linked and dropped in.
+#[test]
+fn an_auth_door_loaded_as_another_kind_is_refused() {
+    let d = dispatcher();
     assert!(
         load_linked::<Secret>(&row(), bind(&d)).is_err(),
         "an auth door must not load as secret"
