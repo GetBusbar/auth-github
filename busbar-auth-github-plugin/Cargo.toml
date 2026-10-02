@@ -23,6 +23,6 @@ busbar-auth-github = { path = "../busbar-auth-github" }
 # opens the built cdylib over the REAL loader, and the live plugin-side e2e (tests/e2e.rs) locates it
 # with the loader's filename helper. Same pinned rev as busbar-contract, so one busbar source resolves.
 busbar-plugin-loader = { workspace = true }
-base64 = "0.22"
+base64 = { workspace = true }
 reqwest = { workspace = true, features = ["json", "blocking"] }
 serde_json = { workspace = true }
