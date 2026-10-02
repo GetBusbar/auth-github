@@ -126,7 +126,10 @@ fn dropped(d: &Dispatcher) -> Plugin<Auth> {
         statement: Some(hex),
         ..Manifest::default()
     };
-    let dir = std::env::temp_dir().join(format!("auth-github-conf-{}", std::process::id()));
+    // One directory per call: the tests of this target run in parallel and each packs its own.
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("auth-github-conf-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let signed = sign(&release(), manifest, &lib);
