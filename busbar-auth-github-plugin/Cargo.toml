@@ -11,6 +11,15 @@ license = "Apache-2.0"
 [lib]
 crate-type = ["rlib", "cdylib"]   # cdylib: the dropped-in image exporting the door; rlib: the tests link it
 
+[features]
+# THE DROPPED-IN DOOR: `export_door!` emits the one C symbol `busbar_plugin_door`, and ONLY the
+# dropped-in cdylib may export it (compiled in = dropped in, one table: a busbar build that links
+# this crate as a row, alone or beside others, must carry no door symbol, or two doors in one
+# binary multiply define it under `lto = "fat"`). OFF by default; the dropped-in artifact is built
+# `cargo build --release -p busbar-auth-github-plugin --features dropped-in`, and `cargo test` names this crate
+# below with it on so the cdylib the conformance test opens carries the door.
+dropped-in = []
+
 [dependencies]
 # busbar-auth-github is a SAME-REPO sibling crate (this plugin brings 100% of what it needs — the real
 # logic lives here, not in busbar). The one busbar crate is busbar-contract (#40), whose
@@ -19,6 +28,8 @@ busbar-contract = { git = "https://github.com/GetBusbar/busbar", rev = "934a016e
 busbar-auth-github = { path = "../busbar-auth-github" }
 
 [dev-dependencies]
+# The conformance test opens this crate's own cdylib WITH its dropped-in door on (see `[features]`).
+busbar-auth-github-plugin = { path = ".", features = ["dropped-in"] }
 # Dev-only: the linked + dropped-in conformance test (tests/conformance.rs) signs, packs, scans and
 # opens the built cdylib over the REAL loader, and the live plugin-side e2e (tests/e2e.rs) locates it
 # with the loader's filename helper. Same pinned rev as busbar-contract, so one busbar source resolves.

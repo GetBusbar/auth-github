@@ -82,6 +82,7 @@ version = "1.0.0"
 dependencies = [
  "base64",
  "busbar-auth-github",
+ "busbar-auth-github-plugin",
  "busbar-contract",
  "busbar-plugin-loader",
  "reqwest",
